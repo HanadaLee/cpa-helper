@@ -329,6 +329,10 @@ When `frontend/dist` exists, the backend serves the built single-page applicatio
 
 ## Configuration
 
+### CAS / OIDC Sign-in
+
+Configure both providers under **System Settings → Authentication**. Select CAS or OIDC for automatic sign-in; `/login?skipsso=true` retains local recovery access. Match the OIDC username claim to the existing CAS username to keep the same account, roles, API keys and quotas. See the [SSO configuration and migration guide](docs/sso.md).
+
 ### CLIProxyAPI / CPAMC
 
 Use the System Settings page to configure:

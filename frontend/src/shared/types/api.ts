@@ -1,4 +1,5 @@
 export type ThemePreference = 'system' | 'light' | 'dark'
+export type SSODefaultLogin = '' | 'cas' | 'oidc'
 
 export interface AuthUser {
   id: number
@@ -9,6 +10,7 @@ export interface AuthUser {
   created_at: string
   is_admin: boolean
   cas_bound: boolean
+  oidc_bound: boolean
   can_change_password: boolean
   must_change_password: boolean
   can_view_account_status: boolean
@@ -29,6 +31,8 @@ export interface SetupState {
   setup_required: boolean
   cas_enabled: boolean
   cas_default_login: boolean
+  oidc_enabled: boolean
+  sso_default_login: SSODefaultLogin
 }
 
 export interface FirstAdminSetupPayload {
@@ -71,6 +75,15 @@ export interface SettingsResponse extends BrandingResponse {
   cas_validation_host: string
   cas_public_url: string
   cas_auto_create_users: boolean
+  sso_default_login: SSODefaultLogin
+  oidc_enabled: boolean
+  oidc_issuer: string
+  oidc_client_id: string
+  oidc_client_secret_set: boolean
+  oidc_public_url: string
+  oidc_logout_url: string
+  oidc_username_claim: string
+  oidc_auto_create_users: boolean
   new_user_quota_unlimited: boolean
   new_user_quota_daily_usd: number
   new_user_quota_weekly_usd: number
@@ -101,6 +114,15 @@ export interface SettingsUpdatePayload {
   cas_validation_host?: string
   cas_public_url?: string
   cas_auto_create_users?: boolean
+  sso_default_login?: SSODefaultLogin
+  oidc_enabled?: boolean
+  oidc_issuer?: string
+  oidc_client_id?: string
+  oidc_client_secret?: string
+  oidc_public_url?: string
+  oidc_logout_url?: string
+  oidc_username_claim?: string
+  oidc_auto_create_users?: boolean
   new_user_quota_unlimited?: boolean
   new_user_quota_daily_usd?: number
   new_user_quota_weekly_usd?: number

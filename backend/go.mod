@@ -3,10 +3,13 @@ module cpa-helper/backend
 go 1.25.7
 
 require (
+	github.com/coreos/go-oidc/v3 v3.16.0
+	github.com/go-jose/go-jose/v4 v4.1.3
 	github.com/google/uuid v1.6.0
 	github.com/pressly/goose/v3 v3.27.1
 	github.com/robfig/cron/v3 v3.0.1
 	golang.org/x/crypto v0.50.0
+	golang.org/x/oauth2 v0.30.0
 	golang.org/x/sync v0.20.0
 	modernc.org/sqlite v1.50.1
 )

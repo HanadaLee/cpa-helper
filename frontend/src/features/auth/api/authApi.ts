@@ -56,6 +56,6 @@ export function changeCredentials(payload: ChangeCredentialsPayload): Promise<Au
   return apiClient.post<unknown>('/auth/change-credentials', payload).then(toAuthUser)
 }
 
-export function logout(): Promise<{ ok: boolean, cas_logout_url?: string }> {
-  return apiClient.post<{ ok: boolean, cas_logout_url?: string }>('/auth/logout')
+export function logout(): Promise<{ ok: boolean, logout_url?: string, cas_logout_url?: string }> {
+  return apiClient.post<{ ok: boolean, logout_url?: string, cas_logout_url?: string }>('/auth/logout')
 }

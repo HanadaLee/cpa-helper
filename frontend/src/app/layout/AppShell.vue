@@ -280,12 +280,13 @@ async function handleLogout() {
   const result = await logout()
   setCurrentUser(null)
   hasLoadedUser.value = true
-  if (result.cas_logout_url) {
-    window.location.assign(result.cas_logout_url)
+  const logoutURL = result.logout_url ?? result.cas_logout_url
+  if (logoutURL) {
+    window.location.assign(logoutURL)
     return
   }
   toast.success(t('已退出登录', 'Signed out'))
-  await router.push('/login')
+  await router.push('/login?skipsso=true')
 }
 
 function cycleTheme() {

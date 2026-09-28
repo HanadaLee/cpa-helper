@@ -74,17 +74,7 @@ func (a *App) handleAuth(w http.ResponseWriter, r *http.Request) error {
 		if err := requireMethod(r, http.MethodPost); err != nil {
 			return err
 		}
-		clearSessionCookie(w)
-		cfg, err := a.loadConfig(r.Context())
-		if err != nil {
-			return err
-		}
-		response := map[string]any{"ok": true}
-		if cfg.CAS.Enabled {
-			response["cas_logout_url"] = "/cas/logout"
-		}
-		writeJSON(w, http.StatusOK, response)
-		return nil
+		return a.handleLogout(w, r)
 	default:
 		return notFoundError("Not Found")
 	}
@@ -137,10 +127,12 @@ func (a *App) handleSetupState(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"setup_required":    count == 0,
 		"cas_enabled":       cfg.CAS.Enabled,
 		"cas_default_login": cfg.CAS.DefaultLogin,
+		"oidc_enabled":      cfg.OIDC.Enabled,
+		"sso_default_login": defaultSSOLogin(cfg),
 	})
 	return nil
 }
@@ -207,8 +199,8 @@ func (a *App) handleChangeCredentials(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return err
 	}
-	if cfg.CAS.Enabled && cfg.CAS.DefaultLogin {
-		return forbiddenError("系统已启用默认 CAS 登录，请前往统一账号中心修改密码")
+	if defaultSSOLogin(cfg) != "" {
+		return forbiddenError("系统已启用强制单点登录，请前往统一账号中心修改密码")
 	}
 	if !current.CanChangePassword {
 		return forbiddenError("当前账号未配置本地登录凭据")
@@ -283,7 +275,8 @@ func (a *App) userCredentialsByUsername(ctx context.Context, username string) (A
 	var passwordHash, passwordSalt, disabledAt sql.NullString
 	err := a.db.QueryRowContext(ctx, `
 		SELECT id, username, nickname, is_admin, cas_bound, cas_email, cas_avatar,
-			CAST(created_at AS TEXT), password_hash, password_salt, disabled_at
+			CAST(created_at AS TEXT), password_hash, password_salt, disabled_at,
+			EXISTS(SELECT 1 FROM oidc_identities WHERE user_id = users.id)
 		FROM users WHERE username = ?
 	`, username).Scan(
 		&user.ID,
@@ -297,6 +290,7 @@ func (a *App) userCredentialsByUsername(ctx context.Context, username string) (A
 		&passwordHash,
 		&passwordSalt,
 		&disabledAt,
+		&user.OIDCBound,
 	)
 	if err != nil {
 		return AuthUser{}, nil, nil, false, err
@@ -329,6 +323,15 @@ type settingsUpdateRequest struct {
 	CASValidationHost          *string                      `json:"cas_validation_host"`
 	CASPublicURL               *string                      `json:"cas_public_url"`
 	CASAutoCreateUsers         *bool                        `json:"cas_auto_create_users"`
+	SSODefaultLogin            *string                      `json:"sso_default_login"`
+	OIDCEnabled                *bool                        `json:"oidc_enabled"`
+	OIDCIssuer                 *string                      `json:"oidc_issuer"`
+	OIDCClientID               *string                      `json:"oidc_client_id"`
+	OIDCClientSecret           *string                      `json:"oidc_client_secret"`
+	OIDCPublicURL              *string                      `json:"oidc_public_url"`
+	OIDCLogoutURL              *string                      `json:"oidc_logout_url"`
+	OIDCUsernameClaim          *string                      `json:"oidc_username_claim"`
+	OIDCAutoCreateUsers        *bool                        `json:"oidc_auto_create_users"`
 	NewUserQuotaUnlimited      *bool                        `json:"new_user_quota_unlimited"`
 	NewUserQuotaDailyUSD       *float64                     `json:"new_user_quota_daily_usd"`
 	NewUserQuotaWeeklyUSD      *float64                     `json:"new_user_quota_weekly_usd"`
@@ -542,6 +545,11 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) error {
 		}
 		if payload.CASDefaultLogin != nil {
 			cfg.CAS.DefaultLogin = *payload.CASDefaultLogin
+			if *payload.CASDefaultLogin {
+				cfg.SSODefaultLogin = "cas"
+			} else if cfg.SSODefaultLogin == "cas" {
+				cfg.SSODefaultLogin = ""
+			}
 		}
 		if payload.CASBaseURL != nil {
 			cfg.CAS.BaseURL = *payload.CASBaseURL
@@ -557,6 +565,40 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) error {
 		}
 		if payload.CASAutoCreateUsers != nil {
 			cfg.CAS.AutoCreateUsers = *payload.CASAutoCreateUsers
+		}
+		if payload.OIDCEnabled != nil {
+			cfg.OIDC.Enabled = *payload.OIDCEnabled
+		}
+		if payload.OIDCIssuer != nil {
+			cfg.OIDC.Issuer = *payload.OIDCIssuer
+		}
+		if payload.OIDCClientID != nil {
+			cfg.OIDC.ClientID = *payload.OIDCClientID
+		}
+		if payload.OIDCClientSecret != nil {
+			cfg.OIDC.ClientSecret = *payload.OIDCClientSecret
+		}
+		if payload.OIDCPublicURL != nil {
+			cfg.OIDC.PublicURL = *payload.OIDCPublicURL
+		}
+		if payload.OIDCLogoutURL != nil {
+			cfg.OIDC.LogoutURL = *payload.OIDCLogoutURL
+		}
+		if payload.OIDCUsernameClaim != nil {
+			cfg.OIDC.UsernameClaim = *payload.OIDCUsernameClaim
+		}
+		if payload.OIDCAutoCreateUsers != nil {
+			cfg.OIDC.AutoCreateUsers = *payload.OIDCAutoCreateUsers
+		}
+		if payload.SSODefaultLogin != nil {
+			cfg.SSODefaultLogin = strings.TrimSpace(*payload.SSODefaultLogin)
+			if cfg.SSODefaultLogin != "" && cfg.SSODefaultLogin != "cas" && cfg.SSODefaultLogin != "oidc" {
+				return validationError("强制登录方式必须为 CAS、OIDC 或不强制")
+			}
+			if cfg.SSODefaultLogin == "cas" && !cfg.CAS.Enabled || cfg.SSODefaultLogin == "oidc" && !cfg.OIDC.Enabled {
+				return validationError("请先启用所选的单点登录方式")
+			}
+			cfg.CAS.DefaultLogin = cfg.SSODefaultLogin == "cas"
 		}
 		if payload.NewUserQuotaUnlimited != nil {
 			cfg.NewUserQuota.Unlimited = *payload.NewUserQuotaUnlimited
@@ -576,6 +618,10 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) error {
 			cfg.NewUserQuota.WeeklyUSD = *value
 		}
 		cfg.CAS, err = normalizeCASConfig(cfg.CAS)
+		if err != nil {
+			return err
+		}
+		cfg.OIDC, err = normalizeOIDCConfig(cfg.OIDC)
 		if err != nil {
 			return err
 		}
@@ -617,6 +663,15 @@ func settingsResponse(cfg AppConfig) map[string]any {
 		"cas_validation_host":           cfg.CAS.ValidationHost,
 		"cas_public_url":                cfg.CAS.PublicURL,
 		"cas_auto_create_users":         cfg.CAS.AutoCreateUsers,
+		"sso_default_login":             defaultSSOLogin(cfg),
+		"oidc_enabled":                  cfg.OIDC.Enabled,
+		"oidc_issuer":                   cfg.OIDC.Issuer,
+		"oidc_client_id":                cfg.OIDC.ClientID,
+		"oidc_client_secret_set":        cfg.OIDC.ClientSecret != "",
+		"oidc_public_url":               cfg.OIDC.PublicURL,
+		"oidc_logout_url":               cfg.OIDC.LogoutURL,
+		"oidc_username_claim":           cfg.OIDC.UsernameClaim,
+		"oidc_auto_create_users":        cfg.OIDC.AutoCreateUsers,
 		"new_user_quota_unlimited":      cfg.NewUserQuota.Unlimited,
 		"new_user_quota_daily_usd":      cfg.NewUserQuota.DailyUSD,
 		"new_user_quota_weekly_usd":     cfg.NewUserQuota.WeeklyUSD,

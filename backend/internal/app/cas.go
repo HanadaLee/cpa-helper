@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"cpa-helper/backend/internal/security"
 )
 
 const (
@@ -126,7 +128,7 @@ func (a *App) handleCASCallback(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := setSessionCookie(w, user.ID, cfg.SessionSecret); err != nil {
+	if err := security.SetAuthSessionCookie(w, user.ID, cfg.SessionSecret, "cas", "", strings.HasPrefix(cfg.CAS.PublicURL, "https://")); err != nil {
 		return err
 	}
 	http.Redirect(w, r, returnTo, http.StatusFound)

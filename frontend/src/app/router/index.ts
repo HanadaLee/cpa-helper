@@ -16,14 +16,14 @@ function stringMeta(to: { meta: Record<string, unknown> }, key: string): string 
   return typeof value === 'string' ? value : null
 }
 
-function casLoginPath(redirect: unknown): string {
+function ssoLoginPath(method: 'cas' | 'oidc', redirect: unknown): string {
   const returnTo = typeof redirect === 'string'
     && redirect.startsWith('/')
     && !redirect.startsWith('//')
     && !redirect.includes('\\')
     ? redirect
     : '/'
-  return `/cas/login?returnTo=${encodeURIComponent(returnTo)}`
+  return `/${method}/login?returnTo=${encodeURIComponent(returnTo)}`
 }
 
 export const router = createRouter({
@@ -191,8 +191,9 @@ router.beforeEach(async (to) => {
     }
     try {
       const state = await getSetupState()
-      if (state.cas_enabled && state.cas_default_login && !state.setup_required) {
-        window.location.replace(casLoginPath(to.query.redirect))
+      const method = state.sso_default_login ?? (state.cas_enabled && state.cas_default_login ? 'cas' : '')
+      if (method && !state.setup_required && (method === 'cas' ? state.cas_enabled : state.oidc_enabled)) {
+        window.location.replace(ssoLoginPath(method, to.query.redirect))
         return false
       }
     } catch {

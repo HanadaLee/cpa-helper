@@ -21,8 +21,10 @@ const (
 )
 
 type Identity struct {
-	UserID   *int
-	Username *string
+	UserID     *int
+	Username   *string
+	AuthMethod string
+	SessionID  string
 }
 
 func CreateSalt() (string, error) {
@@ -76,7 +78,11 @@ func MaskSecret(value *string) string {
 }
 
 func SetSessionCookie(w http.ResponseWriter, userID int, secret string) error {
-	token, err := createSessionToken(userID, secret)
+	return SetAuthSessionCookie(w, userID, secret, "local", "", false)
+}
+
+func SetAuthSessionCookie(w http.ResponseWriter, userID int, secret, method, sessionID string, secure bool) error {
+	token, err := createAuthSessionToken(userID, secret, method, sessionID)
 	if err != nil {
 		return err
 	}
@@ -87,6 +93,7 @@ func SetSessionCookie(w http.ResponseWriter, userID int, secret string) error {
 		MaxAge:   sessionMaxAgeSeconds,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
 	})
 	return nil
 }
@@ -139,7 +146,9 @@ func ReadSessionToken(token, secret string) (*Identity, bool) {
 		if err != nil {
 			return nil, false
 		}
-		return &Identity{UserID: &id}, true
+		method, _ := payload["auth_method"].(string)
+		sessionID, _ := payload["sid"].(string)
+		return &Identity{UserID: &id, AuthMethod: method, SessionID: sessionID}, true
 	}
 	if sub != "" {
 		return &Identity{Username: &sub}, true
@@ -160,10 +169,16 @@ func randomHex(size int) (string, error) {
 }
 
 func createSessionToken(userID int, secret string) (string, error) {
+	return createAuthSessionToken(userID, secret, "local", "")
+}
+
+func createAuthSessionToken(userID int, secret, method, sessionID string) (string, error) {
 	payload := map[string]any{
-		"sub": strconv.Itoa(userID),
-		"typ": "user_id",
-		"exp": time.Now().Add(sessionMaxAgeSeconds * time.Second).Unix(),
+		"sub":         strconv.Itoa(userID),
+		"typ":         "user_id",
+		"exp":         time.Now().Add(sessionMaxAgeSeconds * time.Second).Unix(),
+		"auth_method": method,
+		"sid":         sessionID,
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {

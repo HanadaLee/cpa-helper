@@ -71,6 +71,8 @@ type App struct {
 	keeperResetCache          keeperResetCreditCache
 	usageCache                usageQueryCache
 	quotaSyncMu               sync.Mutex
+	oidcMu                    sync.Mutex
+	oidcClient                *oidcRuntime
 	remoteAPIKeysMu           sync.Mutex
 	quotaMaintenanceCancel    context.CancelFunc
 	quotaMaintenanceDone      chan struct{}
@@ -292,6 +294,7 @@ func (a *App) Routes() http.Handler {
 
 	mux.HandleFunc("/api/auth/", a.wrap(a.handleAuth))
 	mux.HandleFunc("/cas/", a.wrap(a.handleCAS))
+	mux.HandleFunc("/oidc/", a.wrap(a.handleOIDC))
 	mux.HandleFunc("/api/branding", a.wrap(a.handleBranding))
 	mux.HandleFunc("/api/settings", a.wrap(a.handleSettings))
 	mux.HandleFunc("/api/tutorials", a.wrap(a.handleTutorials))
@@ -569,6 +572,8 @@ type AppConfig struct {
 	AllowUserUsageHistory      bool                        `json:"allow_user_usage_history"`
 	UsageDetailRetentionDays   int                         `json:"usage_detail_retention_days"`
 	CAS                        CASConfig                   `json:"cas"`
+	OIDC                       OIDCConfig                  `json:"oidc"`
+	SSODefaultLogin            string                      `json:"sso_default_login"`
 	NewUserQuota               NewUserQuotaConfig          `json:"new_user_quota"`
 	SessionSecret              string                      `json:"session_secret"`
 }
@@ -619,6 +624,7 @@ func defaultConfig() (AppConfig, error) {
 			DefaultLogin:    false,
 			AutoCreateUsers: true,
 		},
+		OIDC:          OIDCConfig{UsernameClaim: "preferred_username", AutoCreateUsers: true},
 		NewUserQuota:  NewUserQuotaConfig{},
 		SessionSecret: secret,
 	}, nil
@@ -645,17 +651,18 @@ func (a *App) loadConfig(ctx context.Context) (AppConfig, error) {
 		       cas_enabled, cas_default_login, cas_base_url, cas_validation_url, cas_validation_host,
 		       cas_public_url, cas_auto_create_users,
 		       new_user_quota_unlimited, new_user_quota_daily_usd, new_user_quota_weekly_usd,
-		       session_secret
+		       session_secret, oidc_settings, sso_default_login
 		FROM app_settings WHERE id = 1
 	`)
 	var collectorEnabled, litellmProxyEnabled, allowUserAccountStatus, allowUserUsageHistory bool
 	var casEnabled, casDefaultLogin, casAutoCreateUsers, newUserQuotaUnlimited bool
 	var cliaproxyURL, managementKey, queueName, keeperJSON, rulesJSON, litellmProxyURL, modelRequestURL, modelRequestExtraEndpointsJSON, cpamcURL, brandNameZH, brandNameEN, brandSubtitleZH, brandSubtitleEN, sessionSecret string
 	var casBaseURL, casValidationURL, casValidationHost, casPublicURL string
+	var oidcJSON, ssoDefaultLogin string
 	var batchSize, usageDetailRetentionDays int
 	var pollInterval, retryInterval float64
 	var newUserQuotaDailyUSD, newUserQuotaWeeklyUSD float64
-	if err := row.Scan(&collectorEnabled, &cliaproxyURL, &managementKey, &queueName, &batchSize, &pollInterval, &retryInterval, &keeperJSON, &rulesJSON, &litellmProxyEnabled, &litellmProxyURL, &modelRequestURL, &modelRequestExtraEndpointsJSON, &cpamcURL, &brandNameZH, &brandNameEN, &brandSubtitleZH, &brandSubtitleEN, &allowUserAccountStatus, &allowUserUsageHistory, &usageDetailRetentionDays, &casEnabled, &casDefaultLogin, &casBaseURL, &casValidationURL, &casValidationHost, &casPublicURL, &casAutoCreateUsers, &newUserQuotaUnlimited, &newUserQuotaDailyUSD, &newUserQuotaWeeklyUSD, &sessionSecret); err != nil {
+	if err := row.Scan(&collectorEnabled, &cliaproxyURL, &managementKey, &queueName, &batchSize, &pollInterval, &retryInterval, &keeperJSON, &rulesJSON, &litellmProxyEnabled, &litellmProxyURL, &modelRequestURL, &modelRequestExtraEndpointsJSON, &cpamcURL, &brandNameZH, &brandNameEN, &brandSubtitleZH, &brandSubtitleEN, &allowUserAccountStatus, &allowUserUsageHistory, &usageDetailRetentionDays, &casEnabled, &casDefaultLogin, &casBaseURL, &casValidationURL, &casValidationHost, &casPublicURL, &casAutoCreateUsers, &newUserQuotaUnlimited, &newUserQuotaDailyUSD, &newUserQuotaWeeklyUSD, &sessionSecret, &oidcJSON, &ssoDefaultLogin); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return AppConfig{}, fmt.Errorf("%w: app_settings id=1 is missing; run `cpa-helper migrate`", ErrAppSettingsMissing)
 		}
@@ -717,6 +724,10 @@ func (a *App) loadConfig(ctx context.Context) (AppConfig, error) {
 		PublicURL:       strings.TrimSpace(casPublicURL),
 		AutoCreateUsers: casAutoCreateUsers,
 	}
+	if err := json.Unmarshal([]byte(oidcJSON), &cfg.OIDC); err != nil {
+		return AppConfig{}, err
+	}
+	cfg.SSODefaultLogin = ssoDefaultLogin
 	cfg.NewUserQuota = NewUserQuotaConfig{
 		Unlimited: newUserQuotaUnlimited,
 		DailyUSD:  newUserQuotaDailyUSD,
@@ -778,6 +789,10 @@ func (a *App) saveConfig(ctx context.Context, cfg AppConfig) error {
 	if err != nil {
 		return err
 	}
+	oidcBytes, err := json.Marshal(cfg.OIDC)
+	if err != nil {
+		return err
+	}
 	_, err = a.db.ExecContext(ctx, `
 		UPDATE app_settings
 		SET collector_enabled = ?, cliaproxy_url = ?, management_key = ?, queue_name = ?,
@@ -789,10 +804,11 @@ func (a *App) saveConfig(ctx context.Context, cfg AppConfig) error {
 		    allow_user_usage_history = ?, usage_detail_retention_days = ?,
 		    cas_enabled = ?, cas_default_login = ?, cas_base_url = ?, cas_validation_url = ?, cas_validation_host = ?,
 		    cas_public_url = ?, cas_auto_create_users = ?,
+		    oidc_settings = ?, sso_default_login = ?,
 		    new_user_quota_unlimited = ?, new_user_quota_daily_usd = ?, new_user_quota_weekly_usd = ?,
 		    new_user_quota_monthly_usd = 0, new_user_quota_lifetime_usd = 0, session_secret = ?, updated_at = ?
 		WHERE id = 1
-	`, cfg.Collector.Enabled, strings.TrimRight(strings.TrimSpace(cfg.Collector.CLIProxyURL), "/"), strings.TrimSpace(cfg.Collector.ManagementKey), strings.TrimSpace(cfg.Collector.QueueName), cfg.Collector.BatchSize, cfg.Collector.PollIntervalSeconds, cfg.Collector.RetryIntervalSeconds, string(keeperBytes), string(rulesBytes), cfg.LiteLLMProxy.Enabled, strings.TrimSpace(cfg.LiteLLMProxy.ProxyURL), strings.TrimRight(strings.TrimSpace(cfg.ModelRequestURL), "/"), string(extraEndpointBytes), strings.TrimSpace(cfg.CPAMCURL), nonBlank(strings.TrimSpace(cfg.BrandNameZH), defaultBrandNameZH), nonBlank(strings.TrimSpace(cfg.BrandNameEN), defaultBrandNameEN), nonBlank(strings.TrimSpace(cfg.BrandSubtitleZH), defaultBrandSubtitleZH), nonBlank(strings.TrimSpace(cfg.BrandSubtitleEN), defaultBrandSubtitleEN), cfg.AllowUserAccountStatus, cfg.AllowUserUsageHistory, cfg.UsageDetailRetentionDays, cfg.CAS.Enabled, cfg.CAS.DefaultLogin, strings.TrimSpace(cfg.CAS.BaseURL), strings.TrimSpace(cfg.CAS.ValidationURL), strings.TrimSpace(cfg.CAS.ValidationHost), strings.TrimSpace(cfg.CAS.PublicURL), cfg.CAS.AutoCreateUsers, cfg.NewUserQuota.Unlimited, cfg.NewUserQuota.DailyUSD, cfg.NewUserQuota.WeeklyUSD, cfg.SessionSecret, dbTime(time.Now()))
+	`, cfg.Collector.Enabled, strings.TrimRight(strings.TrimSpace(cfg.Collector.CLIProxyURL), "/"), strings.TrimSpace(cfg.Collector.ManagementKey), strings.TrimSpace(cfg.Collector.QueueName), cfg.Collector.BatchSize, cfg.Collector.PollIntervalSeconds, cfg.Collector.RetryIntervalSeconds, string(keeperBytes), string(rulesBytes), cfg.LiteLLMProxy.Enabled, strings.TrimSpace(cfg.LiteLLMProxy.ProxyURL), strings.TrimRight(strings.TrimSpace(cfg.ModelRequestURL), "/"), string(extraEndpointBytes), strings.TrimSpace(cfg.CPAMCURL), nonBlank(strings.TrimSpace(cfg.BrandNameZH), defaultBrandNameZH), nonBlank(strings.TrimSpace(cfg.BrandNameEN), defaultBrandNameEN), nonBlank(strings.TrimSpace(cfg.BrandSubtitleZH), defaultBrandSubtitleZH), nonBlank(strings.TrimSpace(cfg.BrandSubtitleEN), defaultBrandSubtitleEN), cfg.AllowUserAccountStatus, cfg.AllowUserUsageHistory, cfg.UsageDetailRetentionDays, cfg.CAS.Enabled, cfg.CAS.DefaultLogin, strings.TrimSpace(cfg.CAS.BaseURL), strings.TrimSpace(cfg.CAS.ValidationURL), strings.TrimSpace(cfg.CAS.ValidationHost), strings.TrimSpace(cfg.CAS.PublicURL), cfg.CAS.AutoCreateUsers, string(oidcBytes), defaultSSOLogin(cfg), cfg.NewUserQuota.Unlimited, cfg.NewUserQuota.DailyUSD, cfg.NewUserQuota.WeeklyUSD, cfg.SessionSecret, dbTime(time.Now()))
 	return err
 }
 
@@ -1086,6 +1102,7 @@ type AuthUser struct {
 	CreatedAt            string `json:"created_at"`
 	IsAdmin              bool   `json:"is_admin"`
 	CASBound             bool   `json:"cas_bound"`
+	OIDCBound            bool   `json:"oidc_bound"`
 	CanChangePassword    bool   `json:"can_change_password"`
 	MustChangePassword   bool   `json:"must_change_password"`
 	CanViewAccountStatus bool   `json:"can_view_account_status"`
@@ -1093,7 +1110,7 @@ type AuthUser struct {
 }
 
 func applyAuthUserConfig(user *AuthUser, cfg AppConfig, hasLocalPassword bool) {
-	user.CanChangePassword = hasLocalPassword && !(cfg.CAS.Enabled && cfg.CAS.DefaultLogin)
+	user.CanChangePassword = hasLocalPassword && defaultSSOLogin(cfg) == ""
 	user.CanViewAccountStatus = user.IsAdmin || cfg.AllowUserAccountStatus
 	user.CanViewUsageHistory = user.IsAdmin || cfg.AllowUserUsageHistory
 }
@@ -1112,7 +1129,8 @@ func (a *App) currentUser(ctx context.Context, r *http.Request) (*AuthUser, erro
 		return nil, authenticationError("登录会话已失效")
 	}
 	const selectUser = `SELECT id, username, nickname, is_admin, cas_bound, cas_email, cas_avatar,
-		CAST(created_at AS TEXT), password_hash, password_salt
+		CAST(created_at AS TEXT), password_hash, password_salt,
+		EXISTS(SELECT 1 FROM oidc_identities WHERE user_id = users.id)
 		FROM users WHERE `
 	var row *sql.Row
 	if identity.UserID != nil {
@@ -1135,6 +1153,7 @@ func (a *App) currentUser(ctx context.Context, r *http.Request) (*AuthUser, erro
 		&user.CreatedAt,
 		&passwordHash,
 		&passwordSalt,
+		&user.OIDCBound,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, authenticationError("登录会话已失效")
@@ -1142,6 +1161,15 @@ func (a *App) currentUser(ctx context.Context, r *http.Request) (*AuthUser, erro
 		return nil, err
 	}
 	applyAuthUserConfig(&user, cfg, passwordHash.Valid && passwordSalt.Valid)
+	if identity.AuthMethod == "oidc" {
+		var valid bool
+		if err := a.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oidc_sessions WHERE id = ? AND user_id = ? AND expires_at > ?)`, identity.SessionID, user.ID, time.Now().Unix()).Scan(&valid); err != nil {
+			return nil, err
+		}
+		if !valid {
+			return nil, authenticationError("登录会话已失效")
+		}
+	}
 	return &user, nil
 }
 

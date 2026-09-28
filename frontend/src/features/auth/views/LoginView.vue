@@ -23,6 +23,7 @@ const isLoading = ref(false)
 const isSetupLoading = ref(true)
 const setupRequired = ref(false)
 const casEnabled = ref(false)
+const oidcEnabled = ref(false)
 const showPassword = ref(false)
 const errorMessage = ref<string | null>(null)
 const form = reactive({
@@ -41,12 +42,17 @@ const casLoginHref = computed(() => {
     : '/'
   return `/cas/login?returnTo=${encodeURIComponent(redirect)}`
 })
+const oidcLoginHref = computed(() => casLoginHref.value.replace('/cas/login', '/oidc/login'))
 
 onMounted(async () => {
   try {
     const state = await getSetupState()
     setupRequired.value = state.setup_required
     casEnabled.value = state.cas_enabled
+    oidcEnabled.value = state.oidc_enabled
+    if (route.query.sso_error === 'oidc') {
+      errorMessage.value = t('OIDC 登录未完成，请重试。', 'OIDC sign-in was not completed. Please try again.')
+    }
   } catch (error) {
     errorMessage.value = errorText(error, '初始化状态加载失败', 'Failed to load setup state')
   } finally {
@@ -99,6 +105,9 @@ async function handleSubmit() {
       <CardContent class="flex flex-col gap-5">
         <Alert v-if="errorMessage" variant="destructive">
           <AlertDescription>{{ errorMessage }}</AlertDescription>
+        </Alert>
+        <Alert v-if="route.query.sso_logout === 'local'">
+          <AlertDescription>{{ t('已退出本平台；身份服务未完成退出，如需切换账号请前往身份服务退出。', 'You have signed out locally. Sign out from the identity provider to switch accounts.') }}</AlertDescription>
         </Alert>
 
         <Alert v-if="setupRequired">
@@ -154,11 +163,15 @@ async function handleSubmit() {
           </FieldGroup>
         </form>
 
-        <div v-if="casEnabled && !setupRequired" class="cas-login-section">
+        <div v-if="(casEnabled || oidcEnabled) && !setupRequired" class="cas-login-section">
           <div class="cas-login-divider">
             <span>{{ t('或', 'OR') }}</span>
           </div>
-          <Button as="a" class="w-full" variant="outline" :href="casLoginHref">
+          <Button v-if="oidcEnabled" as="a" class="w-full" variant="outline" :href="oidcLoginHref">
+            <LogInIcon data-icon="inline-start" />
+            {{ t('使用 OIDC 登录', 'Sign in with OIDC') }}
+          </Button>
+          <Button v-if="casEnabled" as="a" class="w-full" variant="outline" :href="casLoginHref">
             <LogInIcon data-icon="inline-start" />
             {{ t('使用 CAS 登录', 'Sign in with CAS') }}
           </Button>

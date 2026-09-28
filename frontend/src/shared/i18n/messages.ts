@@ -4,6 +4,25 @@ type MessagePair = readonly [zh: string, en: string]
 type ServerMessagePattern = readonly [RegExp, (match: RegExpMatchArray) => string]
 
 const exactServerMessages: MessagePair[] = [
+  ['OIDC 登录未启用', 'OIDC sign-in is disabled'],
+  ['无法读取 OIDC 服务配置', 'Unable to load OIDC provider configuration'],
+  ['OIDC 服务配置缺少必要端点', 'The OIDC provider configuration is missing required endpoints'],
+  ['OIDC 登录状态无效或已过期，请重新登录', 'OIDC sign-in state is invalid or expired. Please sign in again.'],
+  ['OIDC 配置已变更，请重新登录', 'OIDC configuration changed. Please sign in again.'],
+  ['OIDC 授权码无效', 'Invalid OIDC authorization code'],
+  ['OIDC 授权码交换失败，请重新登录', 'OIDC code exchange failed. Please sign in again.'],
+  ['OIDC 身份验证失败', 'OIDC identity verification failed'],
+  ['OIDC 用户信息无效', 'Invalid OIDC profile'],
+  ['OIDC 响应缺少配置的用户名字段', 'The OIDC response is missing the configured username claim'],
+  ['OIDC UserInfo 身份不匹配', 'OIDC UserInfo subject does not match the ID token'],
+  ['同名账号尚未绑定 CAS，请先通过 CAS 登录后再使用 OIDC', 'An existing account with this username is not linked to CAS. Sign in with CAS before using OIDC.'],
+  ['OIDC 用户尚未在 CPA-Helper 中创建', 'This OIDC user has not been created in CPA-Helper'],
+  ['该用户已绑定其他 OIDC 身份，不能自动合并', 'This user is already linked to another OIDC identity and cannot be merged automatically'],
+  ['OIDC 用户名字段无效', 'Invalid OIDC username claim'],
+  ['启用 OIDC 时必须填写 Issuer、Client ID、Client Secret 和公网地址', 'Issuer, client ID, client secret and public URL are required to enable OIDC'],
+  ['强制登录方式必须为 CAS、OIDC 或不强制', 'The automatic sign-in method must be CAS, OIDC or none'],
+  ['请先启用所选的单点登录方式', 'Enable the selected single sign-on provider first'],
+  ['系统已启用强制单点登录，请前往统一账号中心修改密码', 'Automatic single sign-on is enabled. Change your password in the identity provider account center.'],
   ['配额仅支持日配额和周配额', 'Only daily and weekly quotas are supported'],
   ['不能同时指定全部用户和用户列表', 'Choose either all users or specific users'],
   ['请选择 1 至 1000 位用户', 'Select between 1 and 1000 users'],
@@ -219,6 +238,8 @@ const serverTermTranslations: MessagePair[] = [
 ]
 
 const serverMessagePatterns: ServerMessagePattern[] = [
+  [/^OIDC (Issuer|公网地址)必须为 HTTPS 地址（本机调试可使用 HTTP），且不能包含查询参数或锚点$/, ([, field]) => `OIDC ${field === 'Issuer' ? 'issuer' : 'public URL'} must use HTTPS (HTTP is allowed for loopback testing), without query parameters or fragments`],
+  [/^OIDC (退出地址|端点)必须为 HTTPS 地址（本机调试可使用 HTTP），且不能包含用户凭据或锚点$/, ([, field]) => `OIDC ${field === '退出地址' ? 'logout URL' : 'endpoint'} must use HTTPS (HTTP is allowed for loopback testing), without user credentials or fragments`],
   [/^操作失败$/, () => 'Operation failed'],
   [/^加载(.+)失败$/, ([, subject]) => `Failed to load ${translateTerms(subject ?? '')}`],
   [/^保存(.+)失败$/, ([, subject]) => `Failed to save ${translateTerms(subject ?? '')}`],

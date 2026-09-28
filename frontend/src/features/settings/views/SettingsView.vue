@@ -36,6 +36,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 import { Spinner } from '@/components/ui/spinner'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
@@ -48,7 +49,7 @@ import {
   updateSettings,
 } from '@/features/settings/api/settingsApi'
 import { useI18n } from '@/shared/i18n'
-import type { CollectorStatus, ModelRequestExtraEndpoint, SettingsUpdatePayload } from '@/shared/types/api'
+import type { CollectorStatus, ModelRequestExtraEndpoint, SettingsUpdatePayload, SSODefaultLogin } from '@/shared/types/api'
 import { formatDateTime, formatInteger } from '@/shared/utils/format'
 
 const message = toast
@@ -61,6 +62,7 @@ const cpaConfigPanel = ref<InstanceType<typeof CPAConfigPanel> | null>(null)
 const tutorialManager = ref<InstanceType<typeof TutorialManager> | null>(null)
 const activeTab = ref('general')
 const showManagementKey = ref(false)
+const oidcSecretSet = ref(false)
 
 const settingsForm = reactive({
   cliaproxy_url: 'http://127.0.0.1:8317',
@@ -80,7 +82,15 @@ const settingsForm = reactive({
   allow_user_usage_history: false,
   usage_detail_retention_days: 90,
   cas_enabled: false,
-  cas_default_login: false,
+  sso_default_login: '' as SSODefaultLogin,
+  oidc_enabled: false,
+  oidc_issuer: '',
+  oidc_client_id: '',
+  oidc_client_secret: '',
+  oidc_public_url: '',
+  oidc_logout_url: '',
+  oidc_username_claim: 'preferred_username',
+  oidc_auto_create_users: true,
   cas_base_url: '',
   cas_validation_url: '',
   cas_validation_host: '',
@@ -90,6 +100,13 @@ const settingsForm = reactive({
   new_user_quota_daily_usd: 0,
   new_user_quota_weekly_usd: 0,
 })
+
+const ssoDefaultLogin = computed({
+  get: () => settingsForm.sso_default_login || 'none',
+  set: (value: string) => { settingsForm.sso_default_login = value === 'cas' || value === 'oidc' ? value : '' },
+})
+const oidcCallbackURL = computed(() => settingsForm.oidc_public_url.replace(/\/$/, '') + '/oidc/callback')
+const oidcLogoutCallbackURL = computed(() => settingsForm.oidc_public_url.replace(/\/$/, '') + '/oidc/logged-out')
 
 const remoteStatusType = computed(() => {
   if (collectorStatus.value?.remote_enabled === true) {
@@ -170,7 +187,16 @@ async function refresh(reloadPanels = false) {
     settingsForm.allow_user_usage_history = settings.allow_user_usage_history
     settingsForm.usage_detail_retention_days = settings.usage_detail_retention_days
     settingsForm.cas_enabled = settings.cas_enabled
-    settingsForm.cas_default_login = settings.cas_default_login
+    settingsForm.sso_default_login = settings.sso_default_login ?? (settings.cas_default_login ? 'cas' : '')
+    settingsForm.oidc_enabled = settings.oidc_enabled
+    settingsForm.oidc_issuer = settings.oidc_issuer
+    settingsForm.oidc_client_id = settings.oidc_client_id
+    settingsForm.oidc_client_secret = ''
+    oidcSecretSet.value = settings.oidc_client_secret_set
+    settingsForm.oidc_public_url = settings.oidc_public_url
+    settingsForm.oidc_logout_url = settings.oidc_logout_url
+    settingsForm.oidc_username_claim = settings.oidc_username_claim
+    settingsForm.oidc_auto_create_users = settings.oidc_auto_create_users
     settingsForm.cas_base_url = settings.cas_base_url
     settingsForm.cas_validation_url = settings.cas_validation_url
     settingsForm.cas_validation_host = settings.cas_validation_host
@@ -224,7 +250,15 @@ async function saveSettings() {
       allow_user_usage_history: settingsForm.allow_user_usage_history,
       usage_detail_retention_days: settingsForm.usage_detail_retention_days,
       cas_enabled: settingsForm.cas_enabled,
-      cas_default_login: settingsForm.cas_default_login,
+      sso_default_login: settingsForm.sso_default_login,
+      oidc_enabled: settingsForm.oidc_enabled,
+      oidc_issuer: settingsForm.oidc_issuer,
+      oidc_client_id: settingsForm.oidc_client_id,
+      ...(settingsForm.oidc_client_secret ? { oidc_client_secret: settingsForm.oidc_client_secret } : {}),
+      oidc_public_url: settingsForm.oidc_public_url,
+      oidc_logout_url: settingsForm.oidc_logout_url,
+      oidc_username_claim: settingsForm.oidc_username_claim,
+      oidc_auto_create_users: settingsForm.oidc_auto_create_users,
       cas_base_url: settingsForm.cas_base_url,
       cas_validation_url: settingsForm.cas_validation_url,
       cas_validation_host: settingsForm.cas_validation_host,
@@ -568,6 +602,93 @@ onMounted(() => refresh(false))
       <TabsContent value="cas" force-mount class="settings-tab-content">
         <Card>
           <CardHeader>
+            <CardTitle>{{ t('登录策略', 'Sign-in policy') }}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup class="settings-form">
+              <Field>
+                <FieldLabel for="sso-default-login">{{ t('强制登录方式', 'Automatic sign-in method') }}</FieldLabel>
+                <Select v-model="ssoDefaultLogin">
+                  <SelectTrigger id="sso-default-login"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="none">{{ t('不强制', 'No automatic redirect') }}</SelectItem>
+                      <SelectItem value="oidc" :disabled="!settingsForm.oidc_enabled">OIDC</SelectItem>
+                      <SelectItem value="cas" :disabled="!settingsForm.cas_enabled">CAS</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>{{ t('直接跳转所选登录方式；保留 /login?skipsso=true 本地登录应急入口。', 'Redirect directly to the selected provider. /login?skipsso=true remains available for local recovery sign-in.') }}</FieldDescription>
+              </Field>
+            </FieldGroup>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>{{ t('OIDC 单点登录', 'OIDC single sign-on') }}</CardTitle>
+            <CardDescription>{{ t('使用授权码与 PKCE 登录；与 CAS 共享用户、角色、密钥和配额。', 'Sign in using the authorization code flow with PKCE. Users, roles, API keys and quotas are shared with CAS.') }}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup class="settings-form">
+              <Field orientation="horizontal" class="settings-switch">
+                <FieldContent><FieldLabel for="oidc-enabled">{{ t('启用 OIDC 登录', 'Enable OIDC login') }}</FieldLabel></FieldContent>
+                <Switch id="oidc-enabled" v-model="settingsForm.oidc_enabled" />
+              </Field>
+              <FieldGroup class="form-grid">
+                <Field>
+                  <FieldLabel for="oidc-issuer">OIDC Issuer</FieldLabel>
+                  <Input id="oidc-issuer" v-model="settingsForm.oidc_issuer" placeholder="https://iam.example.com" />
+                  <FieldDescription>{{ t('填写身份服务公布的 Issuer，自动发现授权、令牌和签名验证端点。', 'Enter the issuer published by the identity provider. Authorization, token and signing-key endpoints are discovered automatically.') }}</FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel for="oidc-public-url">{{ t('OIDC 公网地址', 'OIDC public URL') }}</FieldLabel>
+                  <Input id="oidc-public-url" v-model="settingsForm.oidc_public_url" placeholder="https://gateway.example.com" />
+                  <FieldDescription>{{ t('填写当前平台的浏览器访问地址，用于生成登录和退出回调。', 'The browser-facing URL of this platform, used for sign-in and sign-out callbacks.') }}</FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel for="oidc-client-id">Client ID</FieldLabel>
+                  <Input id="oidc-client-id" v-model="settingsForm.oidc_client_id" autocomplete="off" />
+                </Field>
+                <Field>
+                  <FieldLabel for="oidc-client-secret">Client Secret</FieldLabel>
+                  <Input id="oidc-client-secret" v-model="settingsForm.oidc_client_secret" type="password" autocomplete="new-password" :placeholder="oidcSecretSet ? t('已配置，留空保持不变', 'Configured; leave blank to keep') : t('填写客户端密钥', 'Enter client secret')" />
+                  <FieldDescription>{{ t('密钥仅保存在服务端，不会返回浏览器。', 'The secret is kept on the server and is never returned to the browser.') }}</FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel for="oidc-username-claim">{{ t('用户名字段', 'Username claim') }}</FieldLabel>
+                  <Input id="oidc-username-claim" v-model="settingsForm.oidc_username_claim" placeholder="preferred_username" />
+                  <FieldDescription>{{ t('该字段必须与 CAS 用户名一致。已有 CAS 用户首次登录会关联原账号；不会按昵称或邮箱自动合并。', 'This claim must match the CAS username. Existing CAS users are linked on first sign-in; display names and email addresses are not used as fallbacks.') }}</FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel for="oidc-logout-url">{{ t('OIDC 退出地址（可选）', 'OIDC logout URL (optional)') }}</FieldLabel>
+                  <Input id="oidc-logout-url" v-model="settingsForm.oidc_logout_url" placeholder="https://iam.example.com/api/logout" />
+                  <FieldDescription>{{ t('留空使用 Discovery 公布的退出端点；未公布时只退出本平台并提示。', 'Leave blank to use the discovered logout endpoint. If unavailable, only the local session is ended and a notice is shown.') }}</FieldDescription>
+                </Field>
+              </FieldGroup>
+              <FieldGroup v-if="settingsForm.oidc_public_url" class="form-grid">
+                <Field>
+                  <FieldLabel for="oidc-callback">{{ t('登录回调地址', 'Sign-in callback URL') }}</FieldLabel>
+                  <Input id="oidc-callback" :model-value="oidcCallbackURL" readonly />
+                </Field>
+                <Field>
+                  <FieldLabel for="oidc-logout-callback">{{ t('退出回调地址', 'Sign-out callback URL') }}</FieldLabel>
+                  <Input id="oidc-logout-callback" :model-value="oidcLogoutCallbackURL" readonly />
+                </Field>
+              </FieldGroup>
+              <Field orientation="horizontal" class="settings-switch">
+                <FieldContent>
+                  <FieldLabel for="oidc-auto-create">{{ t('OIDC 自动创建普通用户', 'Automatically create OIDC users') }}</FieldLabel>
+                  <FieldDescription>{{ t('首次登录按下方默认配额创建普通用户；已有用户保持原角色和配额。', 'New users receive the default quotas below. Existing users retain their roles and quotas.') }}</FieldDescription>
+                </FieldContent>
+                <Switch id="oidc-auto-create" v-model="settingsForm.oidc_auto_create_users" />
+              </Field>
+            </FieldGroup>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <CardTitle class="flex items-center gap-2">
               <ShieldCheckIcon class="size-4 text-muted-foreground" />
               {{ t('CAS 单点登录', 'CAS single sign-on') }}
@@ -582,18 +703,6 @@ onMounted(() => refresh(false))
                   <FieldDescription>{{ t('启用后登录页会提供 CAS 入口，退出登录时也会同步退出 CAS。', 'Adds CAS to the sign-in page and signs out from CAS when the local session ends.') }}</FieldDescription>
                 </FieldContent>
                 <Switch v-model="settingsForm.cas_enabled" />
-              </Field>
-
-              <Field
-                orientation="horizontal"
-                class="settings-switch"
-                :data-disabled="!settingsForm.cas_enabled || undefined"
-              >
-                <FieldContent>
-                  <FieldTitle>{{ t('默认使用 CAS 登录', 'Use CAS login by default') }}</FieldTitle>
-                  <FieldDescription>{{ t('启用后访问登录页会自动进入 CAS；使用 /login?skipsso=true 可进入本地登录。', 'Automatically redirects the sign-in page to CAS. Use /login?skipsso=true to access local sign-in.') }}</FieldDescription>
-                </FieldContent>
-                <Switch v-model="settingsForm.cas_default_login" :disabled="!settingsForm.cas_enabled" />
               </Field>
 
               <FieldGroup class="form-grid">
@@ -633,7 +742,7 @@ onMounted(() => refresh(false))
         <Card>
           <CardHeader>
             <CardTitle>{{ t('新用户默认配额', 'Default quotas for new users') }}</CardTitle>
-            <CardDescription>{{ t('用于管理员新增用户和 CAS 首次自动注册；只影响保存设置后创建的用户。', 'Applied to users created by administrators or first-time CAS sign-in; existing users are unchanged.') }}</CardDescription>
+            <CardDescription>{{ t('用于管理员新增用户和 CAS / OIDC 首次自动注册；只影响保存设置后创建的用户。', 'Applied to users created by administrators or first-time CAS / OIDC sign-in; existing users are unchanged.') }}</CardDescription>
           </CardHeader>
           <CardContent>
             <FieldGroup class="settings-form">

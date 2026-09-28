@@ -146,10 +146,10 @@ async function savePassword() {
         <CardHeader>
           <CardTitle>{{ t('登录安全', 'Sign-in security') }}</CardTitle>
           <CardDescription>{{ t('查看登录方式并维护可用的本地凭据。', 'Review the sign-in method and maintain available local credentials.') }}</CardDescription>
-          <CardAction v-if="currentUser">
-            <Badge :variant="currentUser.cas_bound ? 'default' : 'secondary'">
-              {{ currentUser.cas_bound ? t('CAS 已绑定', 'CAS connected') : t('本地账号', 'Local account') }}
-            </Badge>
+          <CardAction v-if="currentUser" class="flex flex-wrap gap-2">
+            <Badge v-if="currentUser.oidc_bound">{{ t('OIDC 已绑定', 'OIDC connected') }}</Badge>
+            <Badge v-if="currentUser.cas_bound">{{ t('CAS 已绑定', 'CAS connected') }}</Badge>
+            <Badge v-if="!currentUser.cas_bound && !currentUser.oidc_bound" variant="secondary">{{ t('本地账号', 'Local account') }}</Badge>
           </CardAction>
         </CardHeader>
         <CardContent v-if="isLoading" class="grid gap-3">
@@ -159,8 +159,8 @@ async function savePassword() {
         <CardContent v-else-if="currentUser" class="security-content">
           <div class="security-message">
             <ShieldCheckIcon />
-            <p v-if="currentUser.cas_bound">
-              {{ t('当前账号已绑定 CAS，绑定关系不支持解绑。', 'This account is connected to CAS and cannot be disconnected.') }}
+            <p v-if="currentUser.cas_bound || currentUser.oidc_bound">
+              {{ t('当前账号已绑定单点登录，绑定关系不支持解绑。', 'This account is connected to single sign-on and cannot be disconnected.') }}
             </p>
             <p v-else>
               {{ t('当前账号使用本地登录凭据。', 'This account uses local sign-in credentials.') }}
@@ -172,7 +172,7 @@ async function savePassword() {
             {{ t('修改密码', 'Change password') }}
           </Button>
           <p v-else class="credential-note">
-            {{ t('本地密码修改已关闭；如需修改登录凭据，请前往 CAS 统一账号中心。', 'Local password changes are disabled. Manage sign-in credentials in the CAS account center.') }}
+            {{ t('本地密码修改已关闭；如需修改登录凭据，请前往统一账号中心。', 'Local password changes are disabled. Manage sign-in credentials in the identity provider account center.') }}
           </p>
         </CardContent>
       </Card>

@@ -55,6 +55,10 @@ export default defineConfig({
         target: apiProxyTarget,
         changeOrigin: true,
       },
+      '/oidc': {
+        target: apiProxyTarget,
+        changeOrigin: true,
+      },
     },
   },
 })

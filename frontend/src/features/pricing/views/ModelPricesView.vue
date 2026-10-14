@@ -36,6 +36,7 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import TimePicker from '@/shared/ui/TimePicker.vue'
 import {
   InputGroup,
   InputGroupAddon,
@@ -1480,9 +1481,9 @@ onMounted(() => {
               </div>
               <FieldDescription>{{ t('仅工作日及开启计费的调休上班日适用；按开始时间排序，时段不可重叠或跨日。', 'Applies only on workdays and opted-in makeup days. Order by start time; periods cannot overlap or cross midnight.') }}</FieldDescription>
               <div v-for="(period, index) in peakPeriods" :key="index" class="flex items-center gap-2">
-                <Input v-model="period.start" type="time" :aria-label="t(`第 ${index + 1} 段开始时间`, `Period ${index + 1} start`)" :disabled="isCalendarLoading || isCalendarSaving" />
+                <TimePicker v-model="period.start" :aria-label="t(`第 ${index + 1} 段开始时间`, `Period ${index + 1} start`)" :disabled="isCalendarLoading || isCalendarSaving" />
                 <span class="text-muted-foreground">–</span>
-                <Input v-model="period.end" type="time" :aria-label="t(`第 ${index + 1} 段结束时间`, `Period ${index + 1} end`)" :disabled="isCalendarLoading || isCalendarSaving" />
+                <TimePicker v-model="period.end" :aria-label="t(`第 ${index + 1} 段结束时间`, `Period ${index + 1} end`)" :disabled="isCalendarLoading || isCalendarSaving" />
                 <Button type="button" variant="ghost" size="icon-sm" :aria-label="t(`删除第 ${index + 1} 段`, `Remove period ${index + 1}`)" :disabled="peakPeriods.length <= 1 || isCalendarLoading || isCalendarSaving" @click="peakPeriods.splice(index, 1)"><Trash2 /></Button>
               </div>
             </Field>

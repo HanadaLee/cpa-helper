@@ -884,13 +884,14 @@ test('all migrated routes render and core controls remain interactive', async ({
   expect(Math.abs(recordsFilterLayout.rightInset)).toBeLessThanOrEqual(1)
   await page.locator('[data-slot="date-time-range-trigger"]').click()
   await expect(page.locator('[data-slot="range-calendar"]')).toBeVisible()
-  const rangeTimeInputs = page.locator('input[type="time"]')
+  const rangeTimeInputs = page.locator('[data-slot="time-picker"]')
   await expect(rangeTimeInputs).toHaveCount(2)
-  await expect(rangeTimeInputs.nth(0)).toHaveAttribute('step', '60')
-  await expect(rangeTimeInputs.nth(1)).toHaveAttribute('step', '60')
-  expect(await rangeTimeInputs.evaluateAll((inputs: HTMLInputElement[]) =>
-    inputs.every((input) => /^\d{2}:\d{2}$/.test(input.value)),
-  )).toBe(true)
+  await expect(page.locator('input[type="time"]')).toHaveCount(0)
+  for (const field of await rangeTimeInputs.all()) {
+    await expect(field.getByRole('spinbutton')).toHaveCount(2)
+    await expect(field.locator('[data-reka-time-field-segment="hour"]')).toHaveAttribute('aria-valuenow', /\d+/)
+    await expect(field.locator('[data-reka-time-field-segment="minute"]')).toHaveAttribute('aria-valuenow', /\d+/)
+  }
   await page.keyboard.press('Escape')
   await expect(page.locator('table')).toBeVisible()
   const adminTimeHeaderBox = await page.getByRole('columnheader', { name: /^(时间|Time)$/ }).boundingBox()

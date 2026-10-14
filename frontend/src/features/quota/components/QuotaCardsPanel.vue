@@ -36,6 +36,7 @@ import {
   TableEmpty,
 } from '@/components/ui/table'
 import FilterCombobox from '@/shared/ui/FilterCombobox.vue'
+import DateTimePicker from '@/shared/ui/DateTimePicker.vue'
 import TablePaginationFooter from '@/shared/ui/TablePaginationFooter.vue'
 import QuotaProgress from './QuotaProgress.vue'
 import { useConfirmDialog } from '@/shared/ui/confirm-dialog'
@@ -519,11 +520,10 @@ defineExpose({ refresh: load })
               {{
                 t('到期时间（北京时间）', 'Expiration (Beijing time)')
               }}
-            </FieldLabel><Input
+            </FieldLabel><DateTimePicker
               id="card-expires"
               v-model="expires"
-              required
-              type="datetime-local"
+              :disabled="busy"
             /><FieldDescription>
               {{
                 t('到期后剩余额度失效。', 'Unused credit expires at this time.')

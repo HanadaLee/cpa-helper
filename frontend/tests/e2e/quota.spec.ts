@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { selectExpiry } from './helpers/date-time'
 
 async function login(page: Page, username = 'admin', password = 'test-password') {
   await page.addInitScript(() => localStorage.setItem('cpa-helper-language', 'zh'))
@@ -45,15 +46,15 @@ test('administrator issues, edits and revokes cards in bulk and resets quotas', 
   await issuer.getByLabel('卡片名称').fill('Bulk credit')
   await issuer.getByLabel('总额度 USD').fill('25')
   await issuer.getByRole('switch', { name: '永久有效', exact: true }).click()
-  await issuer.getByLabel('到期时间（北京时间）').fill('2099-01-01T00:00')
+  const expiresAt = await selectExpiry(page, issuer.getByLabel('到期时间（北京时间）'), '08:30')
   await issuer.getByRole('button', { name: '发放', exact: true }).click()
   await expect(page.getByText('已发放 2 张卡片')).toBeVisible()
   const result = await page.request.get(`/api/quota/cards?user_id=${first.id}`)
   const card = (await result.json()).items[0]
-  expect(new Date(card.expires_at).toISOString()).toBe('2098-12-31T16:00:00.000Z')
+  expect(new Date(card.expires_at).toISOString()).toBe(new Date(expiresAt).toISOString())
   await manager.getByRole('button', { name: `编辑卡片 ${card.id}`, exact: true }).click()
   const editor = page.getByRole('dialog', { name: '编辑卡片', exact: true })
-  await expect(editor.getByLabel('到期时间（北京时间）')).toHaveValue('2099-01-01T00:00')
+  await expect(editor.getByLabel('到期时间（北京时间）')).toHaveText(expiresAt.slice(0, 16).replace('T', ' '))
   await editor.getByLabel('总额度 USD').fill('30')
   await editor.getByRole('button', { name: '保存', exact: true }).click()
   await expect(page.getByText('卡片已保存', { exact: true })).toBeVisible()

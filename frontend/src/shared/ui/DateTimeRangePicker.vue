@@ -6,7 +6,6 @@ import { computed, ref, shallowRef, useId, watch } from 'vue'
 
 import { Button } from '@/components/ui/button'
 import { Field, FieldLabel } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
 import {
   Popover,
   PopoverContent,
@@ -16,6 +15,7 @@ import { RangeCalendar } from '@/components/ui/range-calendar'
 import { Separator } from '@/components/ui/separator'
 import { useI18n } from '@/shared/i18n'
 import { formatDateTime } from '@/shared/utils/format'
+import TimePicker from './TimePicker.vue'
 
 const props = withDefaults(defineProps<{
   modelValue?: [number, number] | null
@@ -196,23 +196,21 @@ function cancel() {
         <Separator />
         <div class="grid gap-3 p-3 sm:grid-cols-2">
           <Field>
-            <FieldLabel :for="`${fieldId}-start`">{{ t('开始时间', 'Start time') }}</FieldLabel>
-            <Input
+            <FieldLabel :id="`${fieldId}-start-label`">{{ t('开始时间', 'Start time') }}</FieldLabel>
+            <TimePicker
               :id="`${fieldId}-start`"
-              type="time"
+              :aria-labelledby="`${fieldId}-start-label`"
               :model-value="draftStart.slice(11, 16)"
-              step="60"
               :disabled="!calendarRange?.start"
               @update:model-value="updateTime('start', $event)"
             />
           </Field>
           <Field>
-            <FieldLabel :for="`${fieldId}-end`">{{ t('结束时间', 'End time') }}</FieldLabel>
-            <Input
+            <FieldLabel :id="`${fieldId}-end-label`">{{ t('结束时间', 'End time') }}</FieldLabel>
+            <TimePicker
               :id="`${fieldId}-end`"
-              type="time"
+              :aria-labelledby="`${fieldId}-end-label`"
               :model-value="draftEnd.slice(11, 16)"
-              step="60"
               :disabled="!calendarRange?.end"
               @update:model-value="updateTime('end', $event)"
             />

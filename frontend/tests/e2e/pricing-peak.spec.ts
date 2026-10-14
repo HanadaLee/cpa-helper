@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { setTime } from './helpers/date-time'
 
 test('model prices show peak, off-peak and long-context tiers', async ({ page }) => {
   const modelName = `gpt-peak-e2e-${Date.now()}`
@@ -78,11 +79,14 @@ test('model prices show peak, off-peak and long-context tiers', async ({ page })
   const makeupSwitch = calendar.getByRole('switch', { name: /调休日按高峰价计算|Charge peak rates on makeup workdays/ })
   if (!(await makeupSwitch.isChecked())) await makeupSwitch.click()
   await calendar.getByRole('button', { name: /添加时段|Add period/ }).click()
-  await expect(calendar.locator('input[type="time"]')).toHaveCount(6)
+  await expect(calendar.locator('[data-slot="time-picker"]')).toHaveCount(6)
+  await expect(calendar.locator('input[type="time"]')).toHaveCount(0)
   await calendar.getByRole('button', { name: /删除第 3 段|Remove period 3/ }).click()
-  await calendar.getByRole('textbox', { name: /第 1 段开始时间|Period 1 start/ }).fill('08:30')
+  await setTime(calendar.getByRole('group', { name: /第 1 段开始时间|Period 1 start/ }), '08:30')
   await calendar.getByRole('button', { name: /保存选项|Save setting/ }).click()
   await page.getByRole('button', { name: /节假日日历|Holiday calendar/ }).click()
   await expect(calendar.getByRole('switch', { name: /调休日按高峰价计算|Charge peak rates on makeup workdays/ })).toBeChecked()
-  await expect(calendar.getByRole('textbox', { name: /第 1 段开始时间|Period 1 start/ })).toHaveValue('08:30')
+  const savedStart = calendar.getByRole('group', { name: /第 1 段开始时间|Period 1 start/ })
+  await expect(savedStart.locator('[data-reka-time-field-segment="hour"]')).toHaveAttribute('aria-valuenow', '8')
+  await expect(savedStart.locator('[data-reka-time-field-segment="minute"]')).toHaveAttribute('aria-valuenow', '30')
 })

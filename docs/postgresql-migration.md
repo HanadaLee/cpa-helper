@@ -2,6 +2,8 @@
 
 本文适用于包含 PostgreSQL 支持的 CPA-Helper 版本。**不会自动迁移旧数据**：仅设置连接地址并启动，会在空库里初始化一套新系统。已有用户必须按下面的停机导入流程操作。
 
+**已有本机 `postgresql` 容器、通过 SCM 发布的部署，优先使用 [SCM 一键演练与正式迁移](postgresql-scm-quickstart.md)**：单文件 Python 脚本自动准备专用数据库/用户、快照、导入、校验与切换；应用使用 `host.docker.internal:63851`、64 连接池。本文以下保留通用手工流程，不需要再逐条重复执行。
+
 ## 1. 本次支持范围
 
 - 不设置 `CPA_HELPER_DATABASE_URL`：继续使用原 SQLite 文件，不改变已有部署行为。

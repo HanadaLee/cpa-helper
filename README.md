@@ -459,6 +459,8 @@ For SQLite upgrades, keep mounting the existing `data/db/cpa_helper.sqlite3`; mi
 
 PostgreSQL is opt-in via `CPA_HELPER_DATABASE_URL`; `CPA_HELPER_DB_MAX_CONNS` defaults to 16 (2–100). For existing data, stop writers and run `import-sqlite --source <snapshot>` against an **empty** PostgreSQL database, followed by `verify-sqlite --source <snapshot>` and `doctor`. Import preserves historical costs, IDs, quota/card ledgers, deduplication and session secrets, verifies per-table counts/checksums, and rolls back on failure. Do not initialize the target first. See [backup, cutover, validation and rollback instructions](docs/postgresql-migration.md) and the optional [Compose override](docker-compose.postgres.yml). Keep one application replica; this is not an HA/online migration feature.
 
+For SCM-managed deployments with an existing local PostgreSQL container, use the [single-file rehearsal and production migration runner](docs/postgresql-scm-quickstart.md). It provisions isolated database credentials, snapshots and verifies data, then switches the application to PostgreSQL with `host.docker.internal:host-gateway` and a 64-connection pool.
+
 ## Contributing
 
 Issues and pull requests are welcome. Before submitting changes, please check:

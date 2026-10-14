@@ -2,10 +2,10 @@ name: Database compatibility
 
 on:
   pull_request:
-    paths: ['backend/**', '.github/workflows/database-tests.yml']
+    paths: ['backend/**', 'scripts/*postgres*.py', '.github/workflows/database-tests.yml']
   push:
     branches: [main, ext]
-    paths: ['backend/**', '.github/workflows/database-tests.yml']
+    paths: ['backend/**', 'scripts/*postgres*.py', '.github/workflows/database-tests.yml']
   workflow_dispatch:
 
 permissions:
@@ -31,6 +31,8 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
       - uses: actions/checkout@v6
+      - name: Migration runner regression
+        run: python3 -m unittest discover -s scripts -p test_migrate_postgres.py -v
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod

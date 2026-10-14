@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"cpa-helper/backend/internal/platform/database"
 )
 
 type quotaQuerier interface {
@@ -91,7 +93,7 @@ type quotaTargets struct {
 	AllUsers bool  `json:"all_users"`
 }
 
-func quotaTargetIDs(ctx context.Context, tx *sql.Tx, target quotaTargets) ([]int, error) {
+func quotaTargetIDs(ctx context.Context, tx *database.Tx, target quotaTargets) ([]int, error) {
 	if target.AllUsers && len(target.UserIDs) != 0 {
 		return nil, validationError("不能同时指定全部用户和用户列表")
 	}
@@ -112,7 +114,11 @@ func quotaTargetIDs(ctx context.Context, tx *sql.Tx, target quotaTargets) ([]int
 			}
 			ids = append(ids, id)
 		}
-		return ids, rows.Err()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		rows.Close()
+		return ids, lockQuotaUsers(ctx, tx, ids)
 	}
 	seen := map[int]bool{}
 	for _, id := range target.UserIDs {
@@ -132,7 +138,7 @@ func quotaTargetIDs(ctx context.Context, tx *sql.Tx, target quotaTargets) ([]int
 		seen[id] = true
 		ids = append(ids, id)
 	}
-	return ids, nil
+	return ids, lockQuotaUsers(ctx, tx, ids)
 }
 
 type quotaCardPayload struct {
@@ -376,6 +382,16 @@ func (a *App) editQuotaCard(ctx context.Context, id int, p quotaCardPayload) err
 		return err
 	}
 	defer tx.Rollback()
+	var userID int
+	if err := tx.QueryRowContext(ctx, "SELECT user_id FROM quota_cards WHERE id = ?", id).Scan(&userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return notFoundError("卡片不存在")
+		}
+		return err
+	}
+	if err := lockQuotaUsers(ctx, tx, []int{userID}); err != nil {
+		return err
+	}
 	card, err := scanQuotaCard(tx.QueryRowContext(ctx, "SELECT "+quotaCardColumns+" FROM quota_cards c JOIN users u ON u.id = c.user_id WHERE c.id = ?", id), time.Now())
 	if errors.Is(err, sql.ErrNoRows) {
 		return notFoundError("卡片不存在")
@@ -465,6 +481,9 @@ func (a *App) revokeQuotaCards(ctx context.Context, actorID int, p quotaRevokePa
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
+		return 0, err
+	}
+	if err := lockQuotaUsers(ctx, tx, ids); err != nil {
 		return 0, err
 	}
 	now := dbTime(time.Now())

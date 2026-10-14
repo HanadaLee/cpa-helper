@@ -36,7 +36,7 @@ func (a *App) resolveOIDCUser(ctx context.Context, cfg AppConfig, subject string
 			}
 			lifetime, monthly, weekly, daily := newUserQuotaArgs(cfg.NewUserQuota)
 			now := dbTime(time.Now())
-			result, err := tx.ExecContext(ctx, `INSERT INTO users
+			result, err := tx.InsertContext(ctx, `INSERT INTO users
 				(username, nickname, is_admin, cas_email, cas_avatar, quota_lifetime_usd, quota_monthly_usd, quota_weekly_usd, quota_daily_usd, created_at, updated_at)
 				VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				profile.Username, normalizeCASProfileValue(firstNonBlank(profile.DisplayName, profile.Username), 240),

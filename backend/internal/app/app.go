@@ -25,6 +25,7 @@ import (
 
 	"cpa-helper/backend/internal/app/web"
 	"cpa-helper/backend/internal/platform/cpahttp"
+	"cpa-helper/backend/internal/platform/database"
 	"cpa-helper/backend/internal/security"
 	backendMigrations "cpa-helper/backend/migrations"
 	"github.com/pressly/goose/v3"
@@ -56,7 +57,7 @@ var defaultKeeperPriorityRules = map[string]int{
 }
 
 type App struct {
-	db                        *sql.DB
+	db                        *database.DB
 	repoRoot                  string
 	dataDir                   string
 	frontendDist              string
@@ -813,11 +814,14 @@ func (a *App) saveConfig(ctx context.Context, cfg AppConfig) error {
 }
 
 func (a *App) runMigrations(ctx context.Context) error {
+	if a.db.Postgres {
+		return a.runPostgresMigrations(ctx)
+	}
 	goose.SetBaseFS(backendMigrations.FS)
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return err
 	}
-	return goose.UpContext(ctx, a.db, ".")
+	return goose.UpContext(ctx, a.db.DB, ".")
 }
 
 func dbTime(t time.Time) string {

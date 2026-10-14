@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
+	"cpa-helper/backend/internal/platform/database"
 	backendMigrations "cpa-helper/backend/migrations"
 )
 
@@ -58,6 +60,9 @@ func Migrate(ctx context.Context) (MigrationReport, error) {
 		return MigrationReport{}, err
 	}
 	defer db.Close()
+	if db.Postgres {
+		paths.DBPath = "postgresql (CPA_HELPER_DATABASE_URL)"
+	}
 
 	before, err := currentMigrationVersion(ctx, db)
 	if err != nil && !errors.Is(err, ErrDatabaseNotInitialized) {
@@ -115,7 +120,18 @@ func resolveRuntimePaths() (RuntimePaths, error) {
 	}, nil
 }
 
-func openRuntimeDB(paths RuntimePaths, readOnly bool) (*sql.DB, error) {
+func openRuntimeDB(paths RuntimePaths, readOnly bool) (*database.DB, error) {
+	if dsn := strings.TrimSpace(os.Getenv("CPA_HELPER_DATABASE_URL")); dsn != "" {
+		maxConnections := 16
+		if value := strings.TrimSpace(os.Getenv("CPA_HELPER_DB_MAX_CONNS")); value != "" {
+			var err error
+			maxConnections, err = strconv.Atoi(value)
+			if err != nil || maxConnections < 2 || maxConnections > 100 {
+				return nil, fmt.Errorf("CPA_HELPER_DB_MAX_CONNS must be between 2 and 100")
+			}
+		}
+		return database.OpenPostgres(dsn, maxConnections)
+	}
 	if readOnly {
 		if _, err := os.Stat(paths.DBPath); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -132,7 +148,7 @@ func openRuntimeDB(paths RuntimePaths, readOnly bool) (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	return db, nil
+	return database.SQLite(db), nil
 }
 
 func sqliteDSN(dbPath string, readOnly bool) string {
@@ -154,7 +170,10 @@ func checkStartupPaths(ctx context.Context, paths RuntimePaths) (StartupCheck, e
 	return checkDatabaseReady(ctx, db, paths.DBPath)
 }
 
-func checkDatabaseReady(ctx context.Context, db *sql.DB, dbPath string) (StartupCheck, error) {
+func checkDatabaseReady(ctx context.Context, db *database.DB, dbPath string) (StartupCheck, error) {
+	if db.Postgres {
+		dbPath = "postgresql (CPA_HELPER_DATABASE_URL)"
+	}
 	current, err := currentMigrationVersion(ctx, db)
 	report := StartupCheck{
 		DBPath:         dbPath,
@@ -179,10 +198,10 @@ func checkDatabaseReady(ctx context.Context, db *sql.DB, dbPath string) (Startup
 	return report, nil
 }
 
-func currentMigrationVersion(ctx context.Context, db *sql.DB) (int64, error) {
+func currentMigrationVersion(ctx context.Context, db *database.DB) (int64, error) {
 	var version sql.NullInt64
 	if err := db.QueryRowContext(ctx, `SELECT MAX(version_id) FROM goose_db_version`).Scan(&version); err != nil {
-		if strings.Contains(err.Error(), "no such table: goose_db_version") {
+		if strings.Contains(err.Error(), "no such table: goose_db_version") || strings.Contains(err.Error(), "SQLSTATE 42P01") {
 			return 0, fmt.Errorf("%w: goose_db_version table is missing", ErrDatabaseNotInitialized)
 		}
 		return 0, err
@@ -193,7 +212,7 @@ func currentMigrationVersion(ctx context.Context, db *sql.DB) (int64, error) {
 	return version.Int64, nil
 }
 
-func requireSchemaShape(ctx context.Context, db *sql.DB) error {
+func requireSchemaShape(ctx context.Context, db *database.DB) error {
 	required := []struct {
 		table  string
 		column string
@@ -265,7 +284,12 @@ func requireSchemaShape(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func columnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
+func columnExists(ctx context.Context, db *database.DB, table, column string) (bool, error) {
+	if db.Postgres {
+		var exists bool
+		err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ? AND column_name = ?)`, table, column).Scan(&exists)
+		return exists, err
+	}
 	rows, err := db.QueryContext(ctx, `PRAGMA table_info("`+table+`")`)
 	if err != nil {
 		return false, err
@@ -290,7 +314,7 @@ func columnExists(ctx context.Context, db *sql.DB, table, column string) (bool, 
 	return false, nil
 }
 
-func requireAppSettingsRow(ctx context.Context, db *sql.DB) error {
+func requireAppSettingsRow(ctx context.Context, db *database.DB) error {
 	var count int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_settings WHERE id = 1`).Scan(&count); err != nil {
 		return err

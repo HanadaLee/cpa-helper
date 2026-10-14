@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"cpa-helper/backend/internal/platform/database"
 	backendMigrations "cpa-helper/backend/migrations"
 	"github.com/pressly/goose/v3"
 )
@@ -255,7 +256,7 @@ func TestTutorialTitleMigrationPreservesArticles(t *testing.T) {
 		('Codex CLI 接入教程', 'Codex CLI setup', 'Codex CLI Windows', 'User-created article', '', 7, 1, '2026-09-21T01:00:00Z');`); err != nil {
 		t.Fatal(err)
 	}
-	a := &App{db: db}
+	a := &App{db: database.SQLite(db)}
 	// The new reader does not depend on category, so it can snapshot the old
 	// schema before upgrading, including duplicate titles and draft articles.
 	expected, err := a.listTutorials(ctx, false)

@@ -1,0 +1,32 @@
+# Linux host-network override: combine with docker-compose.yml.
+# Keep the app at one replica. See docs/postgresql-migration.md before first start.
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD}
+      POSTGRES_DB: postgres
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - cpa-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  cpa-helper:
+    image: ${CPA_HELPER_IMAGE:?set the PostgreSQL-capable CPA_HELPER_IMAGE}
+    environment:
+      CPA_HELPER_DATABASE_URL: ${CPA_HELPER_DATABASE_URL:?set CPA_HELPER_DATABASE_URL}
+      CPA_HELPER_DB_MAX_CONNS: ${CPA_HELPER_DB_MAX_CONNS:-16}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  cpa-postgres:

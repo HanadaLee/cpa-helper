@@ -25,7 +25,7 @@ func newQuotaTestApp(t *testing.T) *App {
 func seedQuotaCard(t *testing.T, a *App, userID int, kind string, amount float64, expires *time.Time) int {
 	t.Helper()
 	now := dbTime(time.Now())
-	result, err := a.db.Exec(`INSERT INTO quota_cards(user_id, kind, name, amount_usd, expires_at, activated_at, created_at, updated_at)
+	result, err := a.db.InsertContext(context.Background(), `INSERT INTO quota_cards(user_id, kind, name, amount_usd, expires_at, activated_at, created_at, updated_at)
 		VALUES (?, ?, 'test card', ?, ?, ?, ?, ?)`, userID, kind, amount, dbTimePtr(expires), now, now, now)
 	if err != nil {
 		t.Fatal(err)
@@ -355,7 +355,7 @@ func TestQuotaUnlimitedUsageSkipsCharges(t *testing.T) {
 func seedQuotaTestUser(t *testing.T, app *App, username string) int {
 	t.Helper()
 	now := dbTime(time.Now())
-	result, err := app.db.Exec(`
+	result, err := app.db.InsertContext(context.Background(), `
 		INSERT INTO users (username, is_admin, nickname, created_at, updated_at)
 		VALUES (?, 0, ?, ?, ?)
 	`, username, username, now, now)

@@ -144,7 +144,7 @@ func (a *App) rollupUsageBatch(ctx context.Context, limit int) (processed int, e
 		}
 	}()
 	var watermark int
-	if err := tx.QueryRowContext(ctx, `SELECT last_rolled_usage_id FROM usage_rollup_state WHERE id = 1`).Scan(&watermark); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT last_rolled_usage_id FROM usage_rollup_state WHERE id = 1`+tx.ForUpdate()).Scan(&watermark); err != nil {
 		return 0, err
 	}
 	rows, err := tx.QueryContext(ctx, `
@@ -231,23 +231,23 @@ func (a *App) rollupUsageBatch(ctx context.Context, limit int) (processed int, e
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(bucket_start, usage_username, api_key_description, provider, model, source_key, source, auth, endpoint, failed)
 			DO UPDATE SET
-				record_count = record_count + excluded.record_count,
-				failed_count = failed_count + excluded.failed_count,
-				input_tokens = input_tokens + excluded.input_tokens,
-				output_tokens = output_tokens + excluded.output_tokens,
-				cached_tokens = cached_tokens + excluded.cached_tokens,
-				cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
-				cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens,
-				cache_hit_tokens = cache_hit_tokens + excluded.cache_hit_tokens,
-				reasoning_tokens = reasoning_tokens + excluded.reasoning_tokens,
-				total_tokens = total_tokens + excluded.total_tokens,
-				zero_token_records = zero_token_records + excluded.zero_token_records,
-				cost_usd = ROUND(cost_usd + excluded.cost_usd, 8),
-				unpriced_records = unpriced_records + excluded.unpriced_records,
-				ttft_ms_sum = ttft_ms_sum + excluded.ttft_ms_sum,
-				ttft_sample_count = ttft_sample_count + excluded.ttft_sample_count,
-				first_timestamp = MIN(first_timestamp, excluded.first_timestamp),
-				last_timestamp = MAX(last_timestamp, excluded.last_timestamp),
+				record_count = usage_hourly_rollups.record_count + excluded.record_count,
+				failed_count = usage_hourly_rollups.failed_count + excluded.failed_count,
+				input_tokens = usage_hourly_rollups.input_tokens + excluded.input_tokens,
+				output_tokens = usage_hourly_rollups.output_tokens + excluded.output_tokens,
+				cached_tokens = usage_hourly_rollups.cached_tokens + excluded.cached_tokens,
+				cache_read_tokens = usage_hourly_rollups.cache_read_tokens + excluded.cache_read_tokens,
+				cache_creation_tokens = usage_hourly_rollups.cache_creation_tokens + excluded.cache_creation_tokens,
+				cache_hit_tokens = usage_hourly_rollups.cache_hit_tokens + excluded.cache_hit_tokens,
+				reasoning_tokens = usage_hourly_rollups.reasoning_tokens + excluded.reasoning_tokens,
+				total_tokens = usage_hourly_rollups.total_tokens + excluded.total_tokens,
+				zero_token_records = usage_hourly_rollups.zero_token_records + excluded.zero_token_records,
+				cost_usd = ROUND(usage_hourly_rollups.cost_usd + excluded.cost_usd, 8),
+				unpriced_records = usage_hourly_rollups.unpriced_records + excluded.unpriced_records,
+				ttft_ms_sum = usage_hourly_rollups.ttft_ms_sum + excluded.ttft_ms_sum,
+				ttft_sample_count = usage_hourly_rollups.ttft_sample_count + excluded.ttft_sample_count,
+				first_timestamp = CASE WHEN usage_hourly_rollups.first_timestamp < excluded.first_timestamp THEN usage_hourly_rollups.first_timestamp ELSE excluded.first_timestamp END,
+				last_timestamp = CASE WHEN usage_hourly_rollups.last_timestamp > excluded.last_timestamp THEN usage_hourly_rollups.last_timestamp ELSE excluded.last_timestamp END,
 				updated_at = excluded.updated_at
 		`, key.bucketStart, key.usageUsername, key.apiKeyDescription, key.provider, key.model, key.sourceKey, key.source, key.auth, key.endpoint, key.failed,
 			metrics.records, metrics.failed, metrics.input, metrics.output, metrics.cached,
@@ -336,7 +336,7 @@ func (a *App) cleanupUsageBatch(ctx context.Context, retentionDays, limit int) (
 		}
 	}()
 	var watermark int
-	if err := tx.QueryRowContext(ctx, `SELECT last_rolled_usage_id FROM usage_rollup_state WHERE id = 1`).Scan(&watermark); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT last_rolled_usage_id FROM usage_rollup_state WHERE id = 1`+tx.ForUpdate()).Scan(&watermark); err != nil {
 		return 0, err
 	}
 	cutoff := dbTime(time.Now().In(appTimeLocation).AddDate(0, 0, -retentionDays))

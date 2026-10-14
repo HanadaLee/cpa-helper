@@ -1,0 +1,41 @@
+name: Database compatibility
+
+on:
+  pull_request:
+    paths: ['backend/**', '.github/workflows/database-tests.yml']
+  push:
+    branches: [main, ext]
+    paths: ['backend/**', '.github/workflows/database-tests.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  database:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        postgres: ['15', '17']
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_USER: cpa_test
+          POSTGRES_PASSWORD: ephemeral-test-password
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U cpa_test -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: SQLite and PostgreSQL regression, import and concurrency checks
+        working-directory: backend
+        env:
+          CPA_HELPER_TEST_POSTGRES_URL: postgres://cpa_test:ephemeral-test-password@127.0.0.1:5432/postgres?sslmode=disable
+        run: go test ./... -count=1 -timeout=10m

@@ -92,7 +92,7 @@ func TestOIDCSettingsPolicyAndSecretHandling(t *testing.T) {
 func TestOIDCMigrationPreservesCASDefaultAndUsers(t *testing.T) {
 	a := newQuotaTestApp(t)
 	id := seedQuotaTestUser(t, a, "migration-user")
-	if err := goose.DownTo(a.db, ".", 202609260002); err != nil {
+	if err := goose.DownTo(a.db.DB, ".", 202609260002); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.db.Exec("UPDATE app_settings SET cas_enabled = 1, cas_default_login = 1, cas_base_url = 'https://cas.example.test', cas_public_url = 'https://helper.example.test'"); err != nil {

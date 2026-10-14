@@ -4437,9 +4437,9 @@ func (a *App) syncKeeperAccountListFromRemote(ctx context.Context, authFiles []m
 	defer tx.Rollback()
 	now := dbTime(time.Now().In(appTimeLocation))
 	insert, err := tx.PrepareContext(ctx, `
-		INSERT OR IGNORE INTO codex_keeper_auth_states (
+		INSERT INTO codex_keeper_auth_states (
 			auth_name, email, auth_index, account_type, disabled, priority, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
 	`)
 	if err != nil {
 		return 0, 0, err
@@ -4638,7 +4638,7 @@ func (a *App) upsertKeeperState(ctx context.Context, result keeperAccountResult)
 			disabled = excluded.disabled,
 			priority = excluded.priority,
 			restore_priority = CASE
-				WHEN ? THEN NULL
+				WHEN ? <> 0 THEN NULL
 				WHEN excluded.restore_priority IS NOT NULL THEN excluded.restore_priority
 				ELSE codex_keeper_auth_states.restore_priority
 			END,
@@ -4676,11 +4676,11 @@ func (a *App) setKeeperAccountDisabled(ctx context.Context, authName string, dis
 	_, err = a.db.ExecContext(ctx, `
 		UPDATE codex_keeper_auth_states
 		SET disabled = ?, restore_priority = NULL, latest_action = NULL, last_error = NULL,
-		    last_status_code = NULL, primary_used_percent = CASE WHEN ? THEN NULL ELSE primary_used_percent END,
-		    secondary_used_percent = CASE WHEN ? THEN NULL ELSE secondary_used_percent END,
-		    primary_reset_at = CASE WHEN ? THEN NULL ELSE primary_reset_at END,
-		    secondary_reset_at = CASE WHEN ? THEN NULL ELSE secondary_reset_at END,
-		    quota_threshold = CASE WHEN ? THEN NULL ELSE quota_threshold END,
+		    last_status_code = NULL, primary_used_percent = CASE WHEN ? <> 0 THEN NULL ELSE primary_used_percent END,
+		    secondary_used_percent = CASE WHEN ? <> 0 THEN NULL ELSE secondary_used_percent END,
+		    primary_reset_at = CASE WHEN ? <> 0 THEN NULL ELSE primary_reset_at END,
+		    secondary_reset_at = CASE WHEN ? <> 0 THEN NULL ELSE secondary_reset_at END,
+		    quota_threshold = CASE WHEN ? <> 0 THEN NULL ELSE quota_threshold END,
 		    last_checked_at = ?, last_healthy_at = COALESCE(?, last_healthy_at), updated_at = ?
 		WHERE auth_name = ?
 	`, disabled, disabled, disabled, disabled, disabled, disabled, checkedAt, lastHealthy, now, authName)
@@ -4758,7 +4758,7 @@ func (a *App) updateKeeperAccountPriority(ctx context.Context, authName string, 
 
 func (a *App) createKeeperRun(ctx context.Context, mode string) (int, error) {
 	now := dbTime(time.Now())
-	result, err := a.db.ExecContext(ctx, `
+	result, err := a.db.InsertContext(ctx, `
 		INSERT INTO codex_keeper_runs (mode, state, detail, started_at, created_at, updated_at)
 		VALUES (?, 'running', '', ?, ?, ?)
 	`, mode, now, now, now)

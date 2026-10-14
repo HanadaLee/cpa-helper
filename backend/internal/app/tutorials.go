@@ -113,7 +113,7 @@ func (a *App) handleTutorialManagement(w http.ResponseWriter, r *http.Request) e
 		item.UpdatedAt = apiDateTime(time.Now())
 		args := []any{item.Title, item.TitleEN, item.Markdown, item.MarkdownEN, item.SortOrder, item.Published, item.UpdatedAt}
 		if id == 0 {
-			result, err = a.db.ExecContext(r.Context(), `INSERT INTO tutorials (title, title_en, markdown, markdown_en, sort_order, published, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, args...)
+			result, err = a.db.InsertContext(r.Context(), `INSERT INTO tutorials (title, title_en, markdown, markdown_en, sort_order, published, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, args...)
 		} else {
 			result, err = a.db.ExecContext(r.Context(), `UPDATE tutorials SET title = ?, title_en = ?, markdown = ?, markdown_en = ?, sort_order = ?, published = ?, updated_at = ? WHERE id = ?`, append(args, id)...)
 		}

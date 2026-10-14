@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -297,6 +298,9 @@ func TestOIDCNewUserCanUseCASAndRetainsDefaultQuotas(t *testing.T) {
 func TestOIDCRejectsInvalidIdentityAndState(t *testing.T) {
 	for _, mode := range []string{"state", "cookie", "expired-state", "config-change", "nonce", "issuer", "audience", "expired-token", "signature", "missing-username", "userinfo-subject", "disabled", "local-collision", "bound-collision", "auto-create-disabled"} {
 		t.Run(mode, func(t *testing.T) {
+			if os.Getenv("CPA_HELPER_DATABASE_URL") != "" {
+				t.Setenv("CPA_HELPER_DATABASE_URL", isolatedPostgres(t))
+			}
 			a := newQuotaTestApp(t)
 			p := newOIDCTestProvider(t)
 			cfg := oidcTestConfig(t, a, p)

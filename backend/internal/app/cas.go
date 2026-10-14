@@ -368,7 +368,7 @@ func (a *App) resolveCASUser(ctx context.Context, cfg AppConfig, profile casProf
 	avatar := normalizeCASProfileValue(profile.Avatar, 2048)
 	lifetimeQuotaUSD, monthlyQuotaUSD, weeklyQuotaUSD, dailyQuotaUSD := newUserQuotaArgs(cfg.NewUserQuota)
 	now := dbTime(time.Now())
-	result, insertErr := a.db.ExecContext(ctx, `
+	result, insertErr := a.db.InsertContext(ctx, `
 		INSERT INTO users (
 			username, is_admin, nickname, cas_bound, cas_email, cas_avatar,
 			quota_lifetime_usd, quota_monthly_usd, quota_weekly_usd, quota_daily_usd,

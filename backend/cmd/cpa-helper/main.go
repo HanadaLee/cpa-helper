@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -45,6 +46,17 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		}
 		fmt.Fprintf(stdout, "migration completed: db=%s previous_version=%d current_version=%d target_version=%d\n", report.DBPath, report.PreviousVersion, report.CurrentVersion, report.TargetVersion)
 		return nil
+	case "import-sqlite", "verify-sqlite":
+		flags := flag.NewFlagSet(command, flag.ContinueOnError)
+		flags.SetOutput(stdout)
+		source := flags.String("source", "", "read-only SQLite snapshot path")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *source == "" || flags.NArg() != 0 {
+			return fmt.Errorf("usage: cpa-helper %s --source <SQLite file>", command)
+		}
+		return backendApp.TransferSQLite(ctx, *source, command == "verify-sqlite", stdout)
 	case "doctor":
 		report, err := backendApp.CheckStartup(ctx)
 		if err != nil {
@@ -113,5 +125,7 @@ func printUsage(w io.Writer) {
   cpa-helper migrate    Run database migrations and exit
   cpa-helper serve      Start only after read-only startup checks pass
   cpa-helper doctor     Run read-only startup checks and exit
+  cpa-helper import-sqlite --source <file>  Copy SQLite into an EMPTY PostgreSQL database
+  cpa-helper verify-sqlite --source <file>  Verify copied rows, hashes and sequences
 `)
 }

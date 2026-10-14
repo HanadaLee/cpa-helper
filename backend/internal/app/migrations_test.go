@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"cpa-helper/backend/internal/platform/database"
 	backendMigrations "cpa-helper/backend/migrations"
 
 	"github.com/pressly/goose/v3"
@@ -581,7 +582,7 @@ func TestRunMigrationsBackfillsUsageTokenBreakdownZeros(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app := &App{db: db}
+	app := &App{db: database.SQLite(db)}
 	if err := app.runMigrations(ctx); err != nil {
 		t.Fatalf("runMigrations() failed: %v", err)
 	}
@@ -610,14 +611,20 @@ func TestRunMigrationsBackfillsUsageTokenBreakdownZeros(t *testing.T) {
 	}
 }
 
-func testTableExists(t *testing.T, db *sql.DB, table string) bool {
+func testTableExists(t *testing.T, db interface {
+	Query(string, ...any) (*sql.Rows, error)
+	QueryRow(string, ...any) *sql.Row
+}, table string) bool {
 	t.Helper()
 	var name string
 	err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name)
 	return err == nil
 }
 
-func testColumnExists(t *testing.T, db *sql.DB, table, column string) bool {
+func testColumnExists(t *testing.T, db interface {
+	Query(string, ...any) (*sql.Rows, error)
+	QueryRow(string, ...any) *sql.Row
+}, table, column string) bool {
 	t.Helper()
 	rows, err := db.Query(`PRAGMA table_info("` + table + `")`)
 	if err != nil {
@@ -643,14 +650,20 @@ func testColumnExists(t *testing.T, db *sql.DB, table, column string) bool {
 	return false
 }
 
-func testIndexExists(t *testing.T, db *sql.DB, index string) bool {
+func testIndexExists(t *testing.T, db interface {
+	Query(string, ...any) (*sql.Rows, error)
+	QueryRow(string, ...any) *sql.Row
+}, index string) bool {
 	t.Helper()
 	var name string
 	err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, index).Scan(&name)
 	return err == nil
 }
 
-func testQueryPlanUsesIndex(t *testing.T, db *sql.DB, index, query string, args ...any) bool {
+func testQueryPlanUsesIndex(t *testing.T, db interface {
+	Query(string, ...any) (*sql.Rows, error)
+	QueryRow(string, ...any) *sql.Row
+}, index, query string, args ...any) bool {
 	t.Helper()
 	rows, err := db.Query(query, args...)
 	if err != nil {

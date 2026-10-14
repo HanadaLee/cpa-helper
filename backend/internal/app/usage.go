@@ -759,7 +759,7 @@ func usageWhere(filters UsageFilters) (string, []any) {
 		args = append(args, *filters.Failed)
 	}
 	if filters.RequestID != nil {
-		clauses = append(clauses, "request_id LIKE ?")
+		clauses = append(clauses, "LOWER(request_id) LIKE LOWER(?)")
 		args = append(args, "%"+*filters.RequestID+"%")
 	}
 	return "WHERE " + strings.Join(clauses, " AND "), args
@@ -1311,9 +1311,17 @@ func (a *App) saveUsageMessage(ctx context.Context, raw []byte) (UsageRecord, bo
 			_ = tx.Rollback()
 		}
 	}()
+	// Serialize allocation/commit of usage IDs with the rollup watermark. PostgreSQL
+	// sequences are not commit ordered; without this lock a late commit could be skipped.
+	if tx.ForUpdate() != "" {
+		var stateID int
+		if err := tx.QueryRowContext(ctx, "SELECT id FROM usage_rollup_state WHERE id = 1"+tx.ForUpdate()).Scan(&stateID); err != nil {
+			return UsageRecord{}, false, err
+		}
+	}
 	dedupResult, err := tx.ExecContext(ctx, `
-		INSERT OR IGNORE INTO usage_ingest_dedup (dedupe_key, usage_timestamp, first_seen_at)
-		VALUES (?, ?, ?)
+		INSERT INTO usage_ingest_dedup (dedupe_key, usage_timestamp, first_seen_at)
+		VALUES (?, ?, ?) ON CONFLICT DO NOTHING
 	`, normalized.DedupeKey, dbTime(normalized.Timestamp), now)
 	if err != nil {
 		return UsageRecord{}, false, err
@@ -1341,7 +1349,7 @@ func (a *App) saveUsageMessage(ctx context.Context, raw []byte) (UsageRecord, bo
 		return record, false, nil
 	}
 
-	result, err := tx.ExecContext(ctx, `
+	result, err := tx.InsertContext(ctx, `
 		INSERT INTO usage_records (
 			created_at, timestamp, usage_username, api_key_description, provider, model, endpoint,
 			reasoning_effort, request_service_tier, source, source_key, source_account, request_id, auth, auth_index, latency_ms, ttft_ms, failed, input_tokens, output_tokens,

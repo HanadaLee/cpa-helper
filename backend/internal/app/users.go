@@ -404,7 +404,7 @@ func (a *App) createUser(ctx context.Context, payload userPayload) (UserSummaryR
 	}
 	lifetimeQuotaUSD, monthlyQuotaUSD, weeklyQuotaUSD, dailyQuotaUSD := newUserQuotaArgs(cfg.NewUserQuota)
 	now := dbTime(time.Now())
-	result, err := a.db.ExecContext(ctx, `
+	result, err := a.db.InsertContext(ctx, `
 		INSERT INTO users (
 			username, password_hash, password_salt, is_admin, nickname,
 			quota_lifetime_usd, quota_monthly_usd, quota_weekly_usd, quota_daily_usd,

@@ -9,3 +9,9 @@ const LatestVersion int64 = 202609280001
 //
 //go:embed *.sql
 var FS embed.FS
+
+// PostgresFS has an independent SQL migration chain. SQLite's historical Go migrations
+// must never be registered against PostgreSQL.
+//
+//go:embed postgres/*.sql
+var PostgresFS embed.FS

@@ -21,7 +21,7 @@
 
 CPA-Helper is a local self-hosted multi-user administration panel for CLIProxyAPI / CPA users. It centralizes usage analytics, request records, user accounts, API keys, model pricing, available models and Codex auth file inspection.
 
-It separates API keys and usage data by user: each user can create and manage their own keys and inspect their own requests, tokens and cost statistics, while administrators can create or disable regular accounts and review global plus per-user usage. It is built with Go, SQLite, Vue 3 and Vite, with runtime data stored in the root-level `data/` directory by default.
+It separates API keys and usage data by user: each user can create and manage their own keys and inspect their own requests, tokens and cost statistics, while administrators can create or disable regular accounts and review global plus per-user usage. It is built with Go, SQLite or PostgreSQL, Vue 3 and Vite, with runtime data stored in the root-level `data/` directory by default.
 
 For clarity, model requests initiated by an Agent are still sent directly from that Agent to CPA. CPA-Helper does not proxy or relay those requests; it only calls CPA management-style interfaces such as the usage queue, API key creation and deletion, and credential management for usage views, key management and credential maintenance.
 
@@ -50,9 +50,9 @@ For clarity, model requests initiated by an Agent are still sent directly from t
 - **Model pricing maintenance**: Maintain token-model input, output and cache prices in USD per million tokens; models whose name contains `image` are charged by a fixed USD price per successful request, with CPA model comparison for quickly filling LiteLLM / manual prices.
 - **Card shop index**: Admins can browse real-time public card-shop and product snapshots, search by product title, use popular tags, sort results and favorite shops for faster lookup. This is only a public information index and does not participate in transactions.
 - **Available model aggregation**: Query available models through the current account's bound CPA API keys and enrich them with local pricing data.
-- **CLIProxyAPI / CPAMC integration**: Configure the service URL, management key, usage queue and local collector options to persist remote usage events into SQLite.
+- **CLIProxyAPI / CPAMC integration**: Configure the service URL, management key, usage queue and local collector options to persist remote usage events into the configured database.
 - **Codex auth file inspection**: Support Cron scheduling, quota thresholds, check-only mode, conditional scanning, concurrent workers, priority rules, account enable/disable and deletion.
-- **Local-first data storage**: Use SQLite and the `data/` directory by default, with `CPA_HELPER_DATA_DIR` available for overriding the runtime data path.
+- **Database options**: SQLite remains the default (`CPA_HELPER_DATA_DIR`). Set `CPA_HELPER_DATABASE_URL` to use PostgreSQL with a configurable connection pool. Existing SQLite data requires an explicit, verified import; see the [complete migration runbook](docs/postgresql-migration.md).
 - **Modern admin interface**: Built with Vue 3, Naive UI, ECharts and lucide icons, with light, dark and system theme modes.
 
 ## Setup Tutorials
@@ -156,7 +156,7 @@ View the current signed-in account and update the password.
 
 ## Tech Stack
 
-- **Backend**: Go standard-library HTTP server, SQLite, robfig/cron and modernc.org/sqlite.
+- **Backend**: Go standard-library HTTP server, SQLite (modernc) / PostgreSQL (pgx), and robfig/cron.
 - **Frontend**: Vue 3, Vite, TypeScript, Vue Router, Naive UI, ECharts and lucide-vue-next.
 - **Runtime data**: Stored in root-level `data/` by default; the SQLite database is `data/db/cpa_helper.sqlite3`.
 - **API shape**: The backend exposes `/api/*`; the Vite development server proxies API calls to `http://127.0.0.1:18317`.
@@ -454,8 +454,10 @@ cd backend
 go test ./...
 ```
 
-The Go backend executable provides `migrate`, `serve`, and `doctor` subcommands. The default no-subcommand startup path runs embedded goose SQLite migrations before serving; `serve` performs read-only startup checks and fails if the database is missing or behind. Migration files live in `backend/migrations/`, and Alembic is no longer required.
-For Docker upgrades, keep mounting the existing `data/db/cpa_helper.sqlite3`; migration logic is packaged into the Go binary and does not read the old source tree.
+The Go backend executable provides `migrate`, `serve`, and `doctor` subcommands. The default no-subcommand startup path runs the selected database’s embedded goose migrations before serving; `serve` performs read-only startup checks and fails if the database is missing or behind. Migration files live in `backend/migrations/`, and Alembic is no longer required.
+For SQLite upgrades, keep mounting the existing `data/db/cpa_helper.sqlite3`; migration logic is packaged into the Go binary and does not read the old source tree.
+
+PostgreSQL is opt-in via `CPA_HELPER_DATABASE_URL`; `CPA_HELPER_DB_MAX_CONNS` defaults to 16 (2–100). For existing data, stop writers and run `import-sqlite --source <snapshot>` against an **empty** PostgreSQL database, followed by `verify-sqlite --source <snapshot>` and `doctor`. Import preserves historical costs, IDs, quota/card ledgers, deduplication and session secrets, verifies per-table counts/checksums, and rolls back on failure. Do not initialize the target first. See [backup, cutover, validation and rollback instructions](docs/postgresql-migration.md) and the optional [Compose override](docker-compose.postgres.yml). Keep one application replica; this is not an HA/online migration feature.
 
 ## Contributing
 

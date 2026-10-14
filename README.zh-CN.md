@@ -21,7 +21,7 @@
 
 CPA-Helper 是面向 CLIProxyAPI / CPA 用户的本地自托管多用户管理面板，用于集中管理用量统计、请求明细、用户账号、API Key、模型价格、可用模型以及 Codex auth file 巡检维护。
 
-它支持按用户隔离 API Key 与用量数据：每个用户都可以独立创建和管理自己的 Key，并查看属于自己的请求、Token 与费用统计；管理员可以创建或禁用普通用户账号，查看全局用量和用户维度明细，适合个人、小团队或共享 CPA 服务的内网场景。项目采用 Go + SQLite + Vue 3 + Vite 构建，默认将运行数据写入仓库根目录的 `data/` 目录。
+它支持按用户隔离 API Key 与用量数据：每个用户都可以独立创建和管理自己的 Key，并查看属于自己的请求、Token 与费用统计；管理员可以创建或禁用普通用户账号，查看全局用量和用户维度明细，适合个人、小团队或共享 CPA 服务的内网场景。项目采用 Go + SQLite / PostgreSQL + Vue 3 + Vite 构建，默认将运行数据写入仓库根目录的 `data/` 目录。
 
 需要说明的是，Agent 发起的模型请求仍由 Agent 直接发送到 CPA，CPA-Helper 不代理或中转这些请求；它只调用 CPA 的 usage 队列、API KEY 创建与删除、凭证管理等接口，用于用量查看、密钥管理和凭证维护。
 
@@ -49,9 +49,9 @@ CPA-Helper 是面向 CLIProxyAPI / CPA 用户的本地自托管多用户管理�
 - **模型价格维护**：Token 模型按 USD / 百万 Token 维护输入、输出、缓存价格；模型名包含 `image` 的模型按每次成功调用固定 USD 计费，并可对照 CPA 当前可用模型快速补齐或调整本地 LiteLLM / 手动价格。
 - **卡网收录**：管理员可实时拉取公开卡网店铺与商品快照，按商品标题搜索、使用热门标签筛选、排序结果并收藏重点店铺；仅做公开信息收录，不参与交易。
 - **可用模型聚合查询**：通过当前账号绑定的 CPA API Key 查询可用模型，并关联本地价格信息。
-- **CLIProxyAPI / CPAMC 集成**：配置服务地址、管理密钥、usage 队列和本地采集参数，将远端 usage 事件落入本地 SQLite。
+- **CLIProxyAPI / CPAMC 集成**：配置服务地址、管理密钥、usage 队列和本地采集参数，将远端 usage 事件落入配置的数据库。
 - **Codex auth file 巡检**：支持 Cron 调度、额度阈值、只检查不修改、按条件扫描、并发 Worker、优先级规则、账号启停和删除维护。
-- **本地优先的数据策略**：默认使用 SQLite 和 `data/` 目录，支持通过 `CPA_HELPER_DATA_DIR` 覆盖运行数据路径。
+- **数据库选择**：默认使用 SQLite，可通过 `CPA_HELPER_DATA_DIR` 覆盖数据路径；配置 `CPA_HELPER_DATABASE_URL` 可使用 PostgreSQL。已有数据需要显式校验导入，详见[完整迁移流程](docs/postgresql-migration.md)。
 - **现代化管理界面**：基于 Vue 3、Naive UI、ECharts 和 lucide 图标，支持浅色、暗色和跟随系统主题。
 
 ## 接入教程
@@ -155,7 +155,7 @@ CPA-Helper 是面向 CLIProxyAPI / CPA 用户的本地自托管多用户管理�
 
 ## 技术栈
 
-- **后端**：Go 标准库 HTTP、SQLite、robfig/cron、modernc.org/sqlite。
+- **后端**：Go 标准库 HTTP、SQLite（modernc）/ PostgreSQL（pgx）、robfig/cron。
 - **前端**：Vue 3、Vite、TypeScript、Vue Router、Naive UI、ECharts、lucide-vue-next。
 - **运行数据**：默认写入根目录 `data/`，SQLite 数据库位于 `data/db/cpa_helper.sqlite3`。
 - **接口风格**：后端统一提供 `/api/*` 接口，前端开发服务器通过 Vite proxy 转发到 `http://127.0.0.1:18317`。
@@ -442,8 +442,10 @@ cd backend
 go test ./...
 ```
 
-Go 后端可执行文件提供 `migrate`、`serve` 和 `doctor` 子命令。不带子命令的默认启动路径会先运行内嵌 goose SQLite 迁移再启动服务；`serve` 只执行只读启动检查，数据库缺失或版本落后时会直接失败。迁移文件位于 `backend/migrations/`，不再需要 Alembic。
-Docker 升级时只需要继续挂载旧的 `data/db/cpa_helper.sqlite3`；迁移逻辑已经随 Go 二进制打包，不会读取旧源码目录。
+Go 后端可执行文件提供 `migrate`、`serve` 和 `doctor` 子命令。不带子命令的默认启动路径会先运行对应数据库的内嵌 goose 迁移再启动服务；`serve` 只执行只读启动检查，数据库缺失或版本落后时会直接失败。迁移文件位于 `backend/migrations/`，不再需要 Alembic。
+SQLite 部署升级时继续挂载旧的 `data/db/cpa_helper.sqlite3`；迁移逻辑已经随 Go 二进制打包，不会读取旧源码目录。
+
+PostgreSQL 通过 `CPA_HELPER_DATABASE_URL` 启用，连接池 `CPA_HELPER_DB_MAX_CONNS` 默认 16（范围 2–100）。已有 SQLite 数据必须停写后，向**空 PostgreSQL 库**执行 `import-sqlite --source <副本路径>`，再执行 `verify-sqlite --source <副本路径>` 和 `doctor`；不要先初始化目标库。工具保留历史费用、ID、配额及额度卡流水、去重账本和会话密钥，逐表核对行数/摘要，失败回滚。完整备份、切换、验证及回滚步骤见[迁移文档](docs/postgresql-migration.md)，Linux host 网络部署可用 [Compose 覆盖配置](docker-compose.postgres.yml)。仍然只运行一个应用实例，不支持在线双写或多副本。
 
 ## 贡献
 

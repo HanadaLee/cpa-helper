@@ -443,7 +443,7 @@ func TestUpdateAutoSyncedPriceLocalOverridesKeepLiteLLMSync(t *testing.T) {
 	defer app.Close()
 
 	now := dbTime(time.Now().In(appTimeLocation))
-	result, err := app.db.Exec(`
+	result, err := app.db.InsertContext(context.Background(), `
 		INSERT INTO model_prices (
 			provider, model, input_usd_per_million, output_usd_per_million,
 			cache_read_usd_per_million, cache_creation_usd_per_million,

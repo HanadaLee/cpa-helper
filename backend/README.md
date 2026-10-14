@@ -39,6 +39,29 @@ Use `cpa-helper migrate` for an explicit migration-only operation. Use
 modifying the database at startup. The Docker image default command runs the
 same integrated startup path as the binary with no subcommand; Alembic is not
 part of the Go runtime.
-For Docker upgrades, the new image only needs the persisted SQLite database;
+For SQLite Docker upgrades, the new image only needs the persisted SQLite database;
 it does not require the old Python source tree or Alembic files.
+
+## PostgreSQL
+
+Set `CPA_HELPER_DATABASE_URL` to a PostgreSQL URL. `CPA_HELPER_DB_MAX_CONNS`
+(default 16, range 2–100) controls the connection pool. Leaving the URL unset
+preserves SQLite behavior. PostgreSQL has its own embedded migrations under
+`migrations/postgres/`; future schema changes must update both dialects.
+
+For existing SQLite data, **stop all writers**, back up the database, and use
+`cpa-helper import-sqlite --source <snapshot>` with an empty PostgreSQL target.
+Then run `verify-sqlite --source <snapshot>` and `doctor` before starting the
+service. Read the [complete migration/rollback runbook](../docs/postgresql-migration.md)
+before using these commands. Never start a migration rehearsal with live CPA settings.
+
+PostgreSQL integration tests are opt-in:
+
+```powershell
+$env:CPA_HELPER_TEST_POSTGRES_URL = "postgres://test_user:password@127.0.0.1:5432/postgres?sslmode=disable"
+go test ./internal/app -run "^TestPostgres" -count=1 -v
+```
+
+The test role needs CREATEDB. Tests create/drop only their own random databases;
+the database named in the URL is not cleared. Do not use production credentials.
 

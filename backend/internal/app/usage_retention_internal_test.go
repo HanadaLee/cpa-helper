@@ -108,7 +108,7 @@ func TestStoredUsageCostRollupCleanupAndPermanentDedup(t *testing.T) {
 	if err := app.db.QueryRow(`SELECT COUNT(*) FROM usage_records WHERE id = ?`, record.ID).Scan(&detailCount); err != nil {
 		t.Fatalf("count detail: %v", err)
 	}
-	if err := app.db.QueryRow(`SELECT COUNT(*), usage_record_id FROM usage_ingest_dedup WHERE dedupe_key = ?`, record.DedupeKey).Scan(&dedupCount, &dedupUsageRecordID); err != nil {
+	if err := app.db.QueryRow(`SELECT COUNT(*), MAX(usage_record_id) FROM usage_ingest_dedup WHERE dedupe_key = ?`, record.DedupeKey).Scan(&dedupCount, &dedupUsageRecordID); err != nil {
 		t.Fatalf("query permanent dedup: %v", err)
 	}
 	if detailCount != 0 || dedupCount != 1 || dedupUsageRecordID != nil {

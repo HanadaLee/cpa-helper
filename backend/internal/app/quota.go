@@ -97,7 +97,7 @@ func (a *App) updateUserQuota(ctx context.Context, userID int, payload userQuota
 		return UserQuotaStatusResponse{}, err
 	}
 	defer tx.Rollback()
-	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT "+userSelectColumns+" FROM users WHERE id = ?", userID))
+	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT "+userSelectColumns+" FROM users WHERE id = ?"+tx.ForUpdate(), userID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return UserQuotaStatusResponse{}, notFoundError("用户不存在")
 	}
@@ -170,7 +170,7 @@ func (a *App) applyQuotaCharge(ctx context.Context, record UsageRecord) error {
 		return err
 	}
 	defer tx.Rollback()
-	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT "+userSelectColumns+" FROM users WHERE username = ?", *record.UsageUsername))
+	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT "+userSelectColumns+" FROM users WHERE username = ?"+tx.ForUpdate(), *record.UsageUsername))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -240,7 +240,7 @@ func (a *App) applyQuotaCharge(ctx context.Context, record UsageRecord) error {
 	} else {
 		user.QuotaUnpricedRecords++
 	}
-	result, err := tx.ExecContext(ctx, `
+	result, err := tx.InsertContext(ctx, `
 		INSERT INTO user_quota_charges (
 			usage_record_id, usage_dedupe_key, usage_timestamp, user_id, usage_username, amount_usd,
 			daily_deducted_usd, weekly_deducted_usd, limit_deducted_usd, cards_deducted_usd, uncovered_usd, unpriced,

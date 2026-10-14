@@ -150,8 +150,19 @@ func (a *App) handleSetupFirstAdmin(w http.ResponseWriter, r *http.Request) erro
 	if len(payload.Password) < 8 {
 		return validationError("密码长度不能少于 8 位")
 	}
-	count, err := a.userCount(r.Context())
+	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if tx.ForUpdate() != "" {
+		var settingsID int
+		if err := tx.QueryRowContext(r.Context(), "SELECT id FROM app_settings WHERE id=1"+tx.ForUpdate()).Scan(&settingsID); err != nil {
+			return err
+		}
+	}
+	var count int
+	if err := tx.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM users").Scan(&count); err != nil {
 		return err
 	}
 	if count > 0 {
@@ -162,7 +173,7 @@ func (a *App) handleSetupFirstAdmin(w http.ResponseWriter, r *http.Request) erro
 		return err
 	}
 	now := dbTime(time.Now())
-	result, err := a.db.ExecContext(r.Context(), `
+	result, err := tx.InsertContext(r.Context(), `
 		INSERT INTO users (username, password_hash, password_salt, is_admin, nickname, created_at, updated_at)
 		VALUES (?, ?, ?, 1, ?, ?, ?)
 	`, username, hashPassword(payload.Password, salt), salt, nickname, now, now)
@@ -170,6 +181,9 @@ func (a *App) handleSetupFirstAdmin(w http.ResponseWriter, r *http.Request) erro
 		return err
 	}
 	id, _ := result.LastInsertId()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
 	cfg, err := a.loadConfig(r.Context())
 	if err != nil {
 		return err
@@ -1104,7 +1118,7 @@ type collectorState struct {
 }
 
 func (a *App) collectorState(ctx context.Context) (collectorState, error) {
-	_, err := a.db.ExecContext(ctx, `INSERT OR IGNORE INTO collector_state (id, running, records_collected, updated_at) VALUES (1, 0, 0, ?)`, dbTime(time.Now()))
+	_, err := a.db.ExecContext(ctx, `INSERT INTO collector_state (id, running, records_collected, updated_at) VALUES (1, 0, 0, ?) ON CONFLICT DO NOTHING`, dbTime(time.Now()))
 	if err != nil {
 		return collectorState{}, err
 	}

@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"cpa-helper/backend/internal/platform/database"
 )
 
 const defaultLiteLLMPricingURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
@@ -614,7 +616,7 @@ func (a *App) createPrice(ctx context.Context, payload modelPricePayload) (Model
 		payload.FastMultiplier = &defaultMultiplier
 	}
 	now := dbTime(time.Now())
-	result, err := a.db.ExecContext(ctx, `
+	result, err := a.db.InsertContext(ctx, `
 		INSERT INTO model_prices (
 			provider, model, input_usd_per_million, output_usd_per_million,
 			cache_read_usd_per_million, cache_creation_usd_per_million, request_usd, fast_enabled, fast_multiplier,
@@ -839,7 +841,7 @@ func (a *App) syncLiteLLMPrices(ctx context.Context, sourceURL string, rawData m
 			overrides = preserved
 		}
 		result, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO model_prices (
+			INSERT INTO model_prices (
 				provider, model, input_usd_per_million, output_usd_per_million,
 				cache_read_usd_per_million, cache_creation_usd_per_million, request_usd, fast_enabled, fast_multiplier,
 				long_context_enabled, long_context_threshold_tokens,
@@ -851,7 +853,7 @@ func (a *App) syncLiteLLMPrices(ctx context.Context, sourceURL string, rawData m
 				long_context_peak_input_usd_per_million, long_context_peak_output_usd_per_million,
 				long_context_peak_cache_read_usd_per_million, long_context_peak_cache_creation_usd_per_million,
 				source, source_model, auto_synced, last_synced_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'litellm', ?, 1, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'litellm', ?, 1, ?, ?) ON CONFLICT DO NOTHING
 		`, payload.Provider, payload.Model, payload.InputUSDPerMillion, payload.OutputUSDPerMillion, payload.CacheReadUSDPerMillion, payload.CacheCreationUSDPerMillion, nullableFloatArg(payload.RequestUSD), overrides.FastEnabled, overrides.FastMultiplier, overrides.LongContextEnabled, overrides.LongContextThresholdTokens, overrides.LongContextInputUSDPerMillion, overrides.LongContextOutputUSDPerMillion, overrides.LongContextCacheReadUSDPerMillion, overrides.LongContextCacheCreationUSDPerMillion, overrides.LongContextFastUnsupported, overrides.OffPeakEnabled, overrides.PeakInputUSDPerMillion, overrides.PeakOutputUSDPerMillion, overrides.PeakCacheReadUSDPerMillion, overrides.PeakCacheCreationUSDPerMillion, nullableFloatArg(overrides.PeakRequestUSD), overrides.LongContextPeakInputUSDPerMillion, overrides.LongContextPeakOutputUSDPerMillion, overrides.LongContextPeakCacheReadUSDPerMillion, overrides.LongContextPeakCacheCreationUSDPerMillion, row.modelName, now, now)
 		if err != nil {
 			return nil, err
@@ -906,7 +908,7 @@ func defaultModelPriceLocalOverrides() modelPriceLocalOverrides {
 	return modelPriceLocalOverrides{FastMultiplier: 1}
 }
 
-func loadLiteLLMLocalOverrides(ctx context.Context, tx *sql.Tx) (map[string]modelPriceLocalOverrides, map[[2]string]modelPriceLocalOverrides, error) {
+func loadLiteLLMLocalOverrides(ctx context.Context, tx *database.Tx) (map[string]modelPriceLocalOverrides, map[[2]string]modelPriceLocalOverrides, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT provider, model, source_model, fast_enabled, fast_multiplier,
 		       long_context_enabled, long_context_threshold_tokens,

@@ -15,6 +15,7 @@ jobs:
   database:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         postgres: ['15', '17']
     services:
@@ -37,5 +38,6 @@ jobs:
       - name: SQLite and PostgreSQL regression, import and concurrency checks
         working-directory: backend
         env:
+          TZ: UTC
           CPA_HELPER_TEST_POSTGRES_URL: postgres://cpa_test:ephemeral-test-password@127.0.0.1:5432/postgres?sslmode=disable
         run: go test ./... -count=1 -timeout=10m

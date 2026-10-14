@@ -355,7 +355,9 @@ func TestUsageOverviewRealtimeSummaryIgnoresSelectedTimeRange(t *testing.T) {
 		"username": "admin", "password": "test-password", "nickname": "Admin",
 	}, nil, nil)
 
-	now := time.Now()
+	// Use UTC even on a Beijing-time workstation: query parameters may carry any
+	// offset, while records written to the database must use the canonical +08:00.
+	now := time.Now().UTC()
 	seedUsageRecordWithValues(t, dataDir, usageRecordSeed{
 		Timestamp: now.Add(-5 * time.Minute).Format(time.RFC3339Nano), Username: "admin", Source: "realtime-source",
 		RequestID: "req-realtime", Auth: "bearer", DedupeKey: "realtime-window",
@@ -845,6 +847,14 @@ func seedUsageRecord(t *testing.T, dataDir string, timestamp string) {
 func seedUsageRecordWithValues(t *testing.T, dataDir string, seed usageRecordSeed) int {
 	t.Helper()
 
+	// This fixture bypasses saveUsageMessage, so mirror its dbTime normalization.
+	// Comparing raw UTC/local strings with canonical database timestamps is invalid.
+	timestamp, err := time.Parse(time.RFC3339Nano, seed.Timestamp)
+	if err != nil {
+		t.Fatalf("invalid usage fixture timestamp %q: %v", seed.Timestamp, err)
+	}
+	storedTimestamp := timestamp.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006-01-02T15:04:05.999999-07:00")
+
 	db := openUsageTestDB(t, dataDir)
 	defer db.Close()
 
@@ -860,7 +870,7 @@ func seedUsageRecordWithValues(t *testing.T, dataDir string, seed usageRecordSee
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1000, ?, ?, ?, ?, 0, 0, ?, ?, ?
 		)
-	`, seed.Timestamp, seed.Timestamp, seed.Username, description, provider, model, nullableSeedString(seed.ReasoningEffort), nullableSeedString(seed.RequestServiceTier), endpoint, seed.Source, nullableSeedSourceKey(seed.Source), seed.RequestID, seed.Auth, nullableSeedString(seed.AuthIndex), nullableSeedFloat(seed.TTFTMS), seed.Failed, seed.InputTokens, seed.OutputTokens, seed.TotalTokens, seed.DedupeKey, seed.RawJSON)
+	`, storedTimestamp, storedTimestamp, seed.Username, description, provider, model, nullableSeedString(seed.ReasoningEffort), nullableSeedString(seed.RequestServiceTier), endpoint, seed.Source, nullableSeedSourceKey(seed.Source), seed.RequestID, seed.Auth, nullableSeedString(seed.AuthIndex), nullableSeedFloat(seed.TTFTMS), seed.Failed, seed.InputTokens, seed.OutputTokens, seed.TotalTokens, seed.DedupeKey, seed.RawJSON)
 	if err != nil {
 		t.Fatal(err)
 	}

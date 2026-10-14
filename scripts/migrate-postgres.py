@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-file SCM migration runner. Python 3.8+, Linux, root, Docker Compose 2.24+.
+"""One-file SCM migration runner. Python 3.8+, Linux, root, Docker Compose v2.
 
 Credentials come from <root>/postgres-migration.env, never command arguments.
 No production database is dropped, no source SQLite file is upgraded in place.
@@ -17,6 +17,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -187,8 +188,9 @@ class Runner:
 
     def preflight(self):
         require(self.compose_file.is_file(), "Missing docker-compose.yml in --root")
-        require(not self.active_env.exists() and not self.active_env.is_symlink(),
-                ".database.env already exists: do not repeat import or switch back to SQLite")
+        require(not self.active_env.is_symlink() and (not self.active_env.exists() or
+                self.active_env.is_file() and self.active_env.stat().st_size == 0),
+                ".database.env already exists with content: do not repeat import or switch back to SQLite")
         self.container = self.inspect(self.config["APP_CONTAINER"])
         require(self.container["State"]["Running"], "Source app must be running before migration")
         require(not any(e.startswith("CPA_HELPER_DATABASE_URL=") and e.split("=", 1)[1]
@@ -202,14 +204,11 @@ class Runner:
         self.data = Path(mounts[0]["Source"]).resolve()
         require(self.data == (self.root / "data/helper").resolve(), "Data bind mount does not match --root/data/helper")
         require((self.data / "db/cpa_helper.sqlite3").is_file(), "Missing source SQLite database")
-        rendered = json.loads(self.compose("config", "--format", "json", "--no-env-resolution"))
+        rendered = json.loads(self.compose("config", "--format", "json"))
         service = rendered["services"]["cpa-helper"]
         require(service.get("container_name") == self.config["APP_CONTAINER"], "Compose container mismatch")
-        envfiles = service.get("env_file", [])
-        require(any(isinstance(e, dict) and Path(e.get("path", "")).name == ".database.env"
-                    and e.get("required") is False for e in envfiles),
-                "Publish the new Compose first (.database.env optional env_file; Compose 2.24+)")
-        require("CPA_HELPER_DATABASE_URL" not in service.get("environment", {}), "Compose environment overrides database env_file")
+        require(not service.get("environment", {}).get("CPA_HELPER_DATABASE_URL"), "Compose already selects PostgreSQL")
+        self.verify_environment_file()
         hosts = service.get("extra_hosts", {})
         if isinstance(hosts, list):
             hosts = dict(item.replace("=", ":", 1).split(":", 1) for item in hosts)
@@ -228,6 +227,23 @@ class Runner:
         self.report.parent.mkdir(mode=0o700, exist_ok=True)
         self.report.mkdir(mode=0o700)
         self.checkpoint("preflight-passed")
+
+    def verify_environment_file(self):
+        # Older Compose resolves away env_file even with --no-interpolate. Ask
+        # Compose to resolve a private synthetic project, without touching the
+        # installed connection file or ever starting a container.
+        marker = "scm-migration-probe-" + secrets.token_hex(16)
+        with tempfile.TemporaryDirectory(prefix="cpa-compose-probe-") as directory:
+            probe = Path(directory)
+            shutil.copyfile(str(self.compose_file), str(probe / "docker-compose.yml"))
+            private_write(probe / ".database.env", "CPA_HELPER_DATABASE_URL=" + marker
+                          + "\nCPA_HELPER_DB_MAX_CONNS=64\n")
+            rendered = json.loads(self.command(["docker", "compose", "--project-directory", str(probe),
+                "-p", self.project, "-f", str(probe / "docker-compose.yml"), "config", "--format", "json"]))
+            environment = rendered["services"]["cpa-helper"].get("environment", {})
+            require(environment.get("CPA_HELPER_DATABASE_URL") == marker
+                    and environment.get("CPA_HELPER_DB_MAX_CONNS") == "64",
+                    "Publish Compose with env_file: ./.database.env; database settings must not be overridden")
 
     def provision(self):
         self.checkpoint("provision-database")
@@ -329,6 +345,11 @@ class Runner:
         private_write(self.active_env, (self.report / "database.env").read_text())
         override = self.report / "image.compose.json"
         private_write(override, json.dumps({"services": {"cpa-helper": {"image": self.image, "pull_policy": "never"}}}))
+        rendered = json.loads(self.compose("config", "--format", "json", override=override))
+        environment = rendered["services"]["cpa-helper"].get("environment", {})
+        require(environment.get("CPA_HELPER_DATABASE_URL") == database_url(self.config, self.database)
+                and environment.get("CPA_HELPER_DB_MAX_CONNS") == "64",
+                "Compose did not load the verified PostgreSQL settings; application was not started")
         self.compose("up", "-d", "--no-deps", "--pull", "never", "--force-recreate", "cpa-helper", override=override)
         running = self.inspect(self.config["APP_CONTAINER"])
         env = dict(item.split("=", 1) for item in running["Config"]["Env"] if "=" in item)

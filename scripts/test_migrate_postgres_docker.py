@@ -62,9 +62,10 @@ class DockerAcceptance(unittest.TestCase):
             spec = {"name": project, "services": {"cpa-helper": {
                 "image": APP_IMAGE, "container_name": container, "restart": "unless-stopped",
                 "extra_hosts": ["host.docker.internal:host-gateway"],
-                "env_file": [{"path": "./.database.env", "required": False}],
+                "env_file": ["./.database.env"],
                 "ports": ["127.0.0.1::18317"], "volumes": ["./data/helper:/app/data"]}}}
             compose.write_text(json.dumps(spec))
+            migration.private_write(root / ".database.env", "")
             self.cmd("docker", "compose", "-f", str(compose), "up", "-d", "--pull", "never")
             original = json.loads(self.cmd("docker", "inspect", container))[0]
             app_port = original["NetworkSettings"]["Ports"]["18317/tcp"][0]["HostPort"]
@@ -98,7 +99,7 @@ class DockerAcceptance(unittest.TestCase):
                       "PG_HOST": "host.docker.internal", "PG_PORT": port, "MAX_CONNS": "64"}
             runner = migration.Runner(root, config, "rehearse")
             runner.run()
-            self.assertFalse((root / ".database.env").exists())
+            self.assertEqual((root / ".database.env").read_bytes(), b"")
             self.assertEqual(json.loads(self.cmd("docker", "inspect", container))[0]["Id"], original["Id"])
             self.assertEqual(json.loads((runner.report / "state.json").read_text())["phase"], "rehearsal-passed")
 
@@ -108,7 +109,7 @@ class DockerAcceptance(unittest.TestCase):
             unchanged = json.loads(self.cmd("docker", "inspect", container))[0]
             self.assertEqual(unchanged["Id"], original["Id"])
             self.assertTrue(unchanged["State"]["Running"])
-            self.assertFalse((root / ".database.env").exists())
+            self.assertEqual((root / ".database.env").read_bytes(), b"")
 
             # Import-stage failure must recover the same untouched SQLite container.
             failing_config = dict(config, DATABASE="cpa_failure_" + token, DB_USER="cpa_failure_" + token)
@@ -122,7 +123,7 @@ class DockerAcceptance(unittest.TestCase):
             self.assertEqual(restored["Id"], original["Id"])
             self.assertTrue(restored["State"]["Running"])
             self.assertEqual(restored["HostConfig"]["RestartPolicy"]["Name"], "unless-stopped")
-            self.assertFalse((root / ".database.env").exists())
+            self.assertEqual((root / ".database.env").read_bytes(), b"")
 
             # Retry the empty, script-owned target from the failed import attempt.
             config = failing_config

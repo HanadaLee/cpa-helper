@@ -128,6 +128,48 @@ class MigrationTests(unittest.TestCase):
         with self.assertRaisesRegex(migration.MigrationError, "already exists"):
             runner.preflight()
 
+    def test_empty_environment_allows_preflight_to_inspect_source(self):
+        runner = self.runner()
+        runner.compose_file.touch()
+        runner.active_env.touch()
+        with patch.object(runner, "inspect", side_effect=migration.MigrationError("source inspection reached")):
+            with self.assertRaisesRegex(migration.MigrationError, "source inspection reached"):
+                runner.preflight()
+
+    def test_compose_probe_is_private_and_does_not_modify_installed_env(self):
+        runner = self.runner()
+        runner.project = "test"
+        runner.compose_file.write_text("services: {}\n")
+        runner.active_env.touch()
+        probes = []
+        def resolve(arguments):
+            directory = Path(arguments[arguments.index("--project-directory") + 1])
+            probes.append(directory)
+            self.assertNotEqual(directory, self.root)
+            self.assertEqual(runner.active_env.read_bytes(), b"")
+            environment = dict(line.split("=", 1) for line in (directory / ".database.env").read_text().splitlines())
+            return json.dumps({"services": {"cpa-helper": {"environment": environment}}})
+        runner.command = resolve
+        runner.verify_environment_file()
+        self.assertFalse(probes[0].exists())
+        runner.command = lambda args: json.dumps({"services": {"cpa-helper": {"environment": {}}}})
+        with self.assertRaisesRegex(migration.MigrationError, "env_file"):
+            runner.verify_environment_file()
+
+    def test_activation_refuses_start_if_compose_drops_database_environment(self):
+        runner = self.runner()
+        runner.image = "sha256:test"
+        migration.private_write(runner.report / "database.env", "CPA_HELPER_DATABASE_URL=" + migration.database_url(self.config, runner.database) + "\n")
+        calls = []
+        def compose(*args, **kwargs):
+            calls.append(args)
+            return json.dumps({"services": {"cpa-helper": {"environment": {}}}})
+        runner.compose = compose
+        with self.assertRaisesRegex(migration.MigrationError, "application was not started"):
+            runner.activate()
+        self.assertTrue(runner.activation_attempted)
+        self.assertEqual([c[0] for c in calls], ["config"])
+
     def test_sql_uses_unix_socket_and_not_password_arguments(self):
         runner = self.runner()
         calls = []

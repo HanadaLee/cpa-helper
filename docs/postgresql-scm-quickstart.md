@@ -11,20 +11,20 @@
 
 两套实例均位于 conf 当前声明的 `as-jp-13-oracle-50`，通过 SCM 分别发布。**没有代为执行生产迁移**。
 
-- 两套独立的 64 位随机十六进制密码已写入私有 conf 仓库各租户的 `base/etc/postgres-migration.env`，下发到安装目录的 `postgres-migration.env`；不要重新生成或把内容复制到任务日志。
+- 两套独立的 64 位随机十六进制密码已写入私有 conf 仓库各租户的 `base/env/postgres-migration.env`，按 0600 权限下发到安装目录的 `postgres-migration.env`；不要重新生成或把内容复制到任务日志。
 - 管理连接：`docker exec --user postgres postgresql psql -h /var/run/postgresql -p 63851 -U postgres_admin`，无需获取数据库管理员密码。
 - 应用连接：`host.docker.internal:63851`，`CPA_HELPER_DB_MAX_CONNS=64`。专用用户没有超级用户、建库、建角色、复制或绕过行级安全权限。
 - 两套 Compose 及所有联网迁移容器均配置 `host.docker.internal:host-gateway`。
 - 固定使用已提供 PostgreSQL 支持的 `0.3.23.114` 镜像，并在每次演练/迁移开始时拉取、解析到镜像 ID；导入和首次启动使用同一镜像 ID。不运行旧镜像升级生产原库。
-- `.database.env` 是目标机的运行状态文件，只有正式导入、校验通过后才生成。普通 SCM 发布不会自动生成它；之后发布仍读取它，不会切回 SQLite。
+- `.database.env` 是目标机的运行状态文件。普通 SCM 发布首次创建空文件，已有文件原样保留；正式导入、校验通过后才写入 PostgreSQL 连接。此文件不由配置覆盖或旧文件清理，创建操作纳入事务日志。
 
 ## 只需发布一次，然后执行两种命令
 
 ### 1. SCM 下发
 
-同步最新 conf，发布 `cpa-helper` 的 `hanada` 和 `huachienergy` 两个租户。目标机器需要 Docker Compose 2.24+（脚本会实际校验 Compose 能力），已有 `postgresql` 容器和 Linux `python3`。
+同步最新 conf，发布 `cpa-helper` 的 `hanada` 和 `huachienergy` 两个租户。目标机器需要 Docker Compose v2（已验证 2.20.3 及 5.5.1），已有 `postgresql` 容器和 Linux `python3`。脚本通过私有临时配置检查实际 env_file 读取能力，不依赖新版 `--no-env-resolution` 参数。
 
-本次发布会沿用组件既有的 recreate 策略；在允许应用短暂重建的时间执行。只下发脚本/凭据和网络映射，**此时仍使用 SQLite**。`post_config.sh` 将凭据权限收紧为 0600，不运行迁移。
+本次发布会沿用组件既有的 recreate 策略；在允许应用短暂重建的时间执行。下发脚本/凭据、网络映射和空的本机环境文件，**此时仍使用 SQLite**。凭据直接按 0600 下发，`post_config.sh` 不运行迁移。若已有容器使用 PostgreSQL 而连接文件缺失，发布会中止并要求恢复连接文件。
 
 若只使用 SCM 的脚本上传功能，也可以把 `migrate-postgres.py` 作为 Python 脚本上传，执行参数保持下文一致。但两套安装目录必须先有上述 Compose 和 `postgres-migration.env`，脚本不会猜测现有部署或在缺少配置时停服。
 
@@ -58,7 +58,7 @@ python3 /usr/local/cpa-helper/cpa-helper_huachienergy/tools/migrate-postgres.py 
 2. 关闭旧容器的自动重启，再等待其正常停止；若被强制结束，终止迁移并恢复原实例，要求核查在途数据。
 3. 备份完整原数据目录及 Compose，生成单独 SQLite 副本，只升级副本。
 4. 导入 → 独立二次校验 → `doctor`，任一步失败均不启用 PostgreSQL。
-5. 原子写入权限 0600 的 `.database.env`（连接 URL、64 连接池），重建该实例，校验容器实际环境、数据库 `doctor` 和本机 `/api/ready`。
+5. 原子写入权限 0600 的 `.database.env`（连接 URL、64 连接池），先检查 Compose 解析结果，再重建该实例，校验容器实际环境、数据库 `doctor` 和本机 `/api/ready`。
 6. 输出 `completed` 和恢复资料目录。之后人工检查登录、配额/历史用量与一次受控请求，再放行业务流量。
 
 SCM 任务超时要大于演练实测总耗时，并为全量备份/导入留余量；大库可设置 3 小时。不要让 SCM 在迁移期间并行发布或重启同一组件。脚本的主机锁只互斥本脚本，不是 SCM 全局部署锁。
@@ -69,11 +69,11 @@ SCM 任务超时要大于演练实测总耗时，并为全量备份/导入留余
 - **启用 PostgreSQL 之前失败**：自动恢复原 SQLite 容器及原重启策略，保留目标库供检查。修复原因后，本脚本创建且仍为空的库可直接重试；已成功导入的非空库不会被自动清空，需先核查或在 conf 指定另一个新库名。不要无脑反复执行同一任务。
 - **尝试启动 PostgreSQL 之后失败**：停止不确定状态的应用，不自动回退 SQLite，因为后台任务可能已产生新写入。保留 `.database.env` 和 PostgreSQL，优先修复当前 PG 实例；确认后用正常 Compose/SCM 部署恢复启动。
 - **硬杀进程/主机断电**：先查看 `state.json`、`.database.env` 和容器实际连接。停服前已禁用原容器自动重启，防止原 SQLite 在迁移过程中意外恢复消费。不要根据“网页没打开过”推断 PG 没有新写入。
-- 已存在 `.database.env` 时脚本拒绝重复导入。迁移完成后请继续保留此文件，**不要删除它来尝试回退**。
+- `.database.env` 非空时脚本拒绝重复导入；首次发布创建的零字节空文件允许演练和迁移。迁移完成后请继续保留此文件，**不要删除它来尝试回退**。
 - conf 中密码为既定凭据：重复演练不会旋转密码，也不会接管未知的现有数据库用户。需要改密时单独安排数据库与 conf/运行环境同步，不以本脚本改密。
 - 每实例最多 64 个应用连接，两套合计最多 128；共享 PostgreSQL 还要给其他应用、迁移、备份和管理员留容量。脚本不擅自修改共享 PostgreSQL 的 `max_connections`、认证规则或防火墙。
 
-更完整的边界和手工恢复流程见 [迁移与运维流程](postgresql-migration.md)。Compose 的可选 env_file 语义见 [Docker 官方说明](https://docs.docker.com/compose/how-tos/environment-variables/set-environment-variables/#additional-information-1)。
+更完整的边界和手工恢复流程见 [迁移与运维流程](postgresql-migration.md)。Compose 的 env_file 语义见 [Docker 官方说明](https://docs.docker.com/compose/how-tos/environment-variables/set-environment-variables/)。
 
 ## 脚本验证
 

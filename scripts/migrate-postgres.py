@@ -101,22 +101,61 @@ def private_write(path, content):
             temporary.unlink()
 
 
-def snapshot_sqlite(source, destination, timeout=300):
+def snapshot_sqlite(source, destination, timeout=1800, log=None):
     require(source.is_file(), "SQLite source is missing")
     require(not destination.exists(), "Snapshot destination already exists")
-    deadline = time.monotonic() + timeout
-
-    def progress(_status, _remaining, _total):
-        require(time.monotonic() < deadline, "SQLite online backup timed out; retry during quieter traffic")
+    require(timeout > 0, "Snapshot timeout must be positive")
+    log = log or (lambda message: None)
+    started = time.monotonic()
+    deadline = started + timeout
+    last_log, last_remaining, restarts = started, None, 0
 
     with contextlib.closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=30)) as src:
-        with contextlib.closing(sqlite3.connect(str(destination))) as dst:
-            src.backup(dst, pages=1024, progress=progress, sleep=0.05)
+        journal = src.execute("PRAGMA journal_mode").fetchone()[0].lower()
+        # A pinned WAL read transaction prevents backup_step from restarting on
+        # concurrent commits. Never pin rollback-journal databases while live:
+        # their writers would be blocked for the entire snapshot duration.
+        if journal == "wal":
+            src.execute("BEGIN")
+            src.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
+        try:
+            total = src.execute("PRAGMA page_count").fetchone()[0]
+            page_size = src.execute("PRAGMA page_size").fetchone()[0]
+            log("SQLite snapshot: journal={}, size={:.1f} MiB, timeout={}s, pinned_read={}".format(
+                journal, total * page_size / 1048576, timeout, journal == "wal"))
+
+            def progress(status, remaining, total):
+                nonlocal last_log, last_remaining, restarts
+                now = time.monotonic()
+                if status == sqlite3.SQLITE_OK:
+                    if last_remaining is not None and remaining >= last_remaining:
+                        restarts += 1
+                    last_remaining = remaining
+                description = "pages={}/{}, elapsed={:.1f}s, progress_resets={}, status={}".format(
+                    total - remaining, total, now - started, restarts, status)
+                if status == sqlite3.SQLITE_DONE or now - last_log >= 15:
+                    log("SQLite snapshot: " + description)
+                    last_log = now
+                # A completed backup is valid even if its last disk sync crossed
+                # the deadline; only abort unfinished work.
+                require(status == sqlite3.SQLITE_DONE or now < deadline,
+                        "SQLite snapshot timed out (journal={}, {}). "
+                        "For rehearsal, use --stop-for-snapshot to briefly stop the app, "
+                        "or increase --snapshot-timeout for a large/slow database.".format(journal, description))
+
+            with contextlib.closing(sqlite3.connect(str(destination))) as dst:
+                src.backup(dst, pages=1024, progress=progress, sleep=0.05)
+        finally:
+            if src.in_transaction:
+                src.rollback()
 
 
 class Runner:
-    def __init__(self, root, config, mode):
+    def __init__(self, root, config, mode, snapshot_timeout=1800, stop_for_snapshot=False):
         self.root, self.config, self.mode = root, config, mode
+        require(snapshot_timeout > 0, "Snapshot timeout must be positive")
+        require(not stop_for_snapshot or mode == "rehearse", "--stop-for-snapshot is only for rehearsal")
+        self.snapshot_timeout, self.stop_for_snapshot = snapshot_timeout, stop_for_snapshot
         self.compose_file = root / "docker-compose.yml"
         self.active_env = root / ".database.env"
         self.run_id = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + secrets.token_hex(3)
@@ -307,16 +346,30 @@ class Runner:
             subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
             self.temp_containers.discard(name)
 
+    def stop_source(self):
+        self.checkpoint("stopping-sqlite")
+        self.restart_changed = True
+        self.command(["docker", "update", "--restart=no", self.container["Id"]])
+        self.command(["docker", "stop", "-t", "120", self.container["Id"]], timeout=150)
+        stopped = self.inspect(self.container["Id"])
+        require(not stopped["State"]["Running"], "Source container did not stop")
+        require(stopped["State"].get("ExitCode") != 137 and not stopped["State"].get("OOMKilled"),
+                "Source needed forced termination; verify in-flight usage before retrying")
+
+    def restart_source(self):
+        policy = self.container["HostConfig"]["RestartPolicy"]
+        restart = policy["Name"] or "no"
+        if restart == "on-failure" and policy.get("MaximumRetryCount"):
+            restart += ":" + str(policy["MaximumRetryCount"])
+        self.command(["docker", "update", "--restart=" + restart, self.container["Id"]])
+        self.command(["docker", "start", self.container["Id"]])
+        self.restart_changed = False
+        self.log("The original SQLite container and restart policy have been restored.")
+
     def backup(self):
+        if self.mode == "migrate" or self.stop_for_snapshot:
+            self.stop_source()
         if self.mode == "migrate":
-            self.checkpoint("stopping-sqlite")
-            self.restart_changed = True
-            self.command(["docker", "update", "--restart=no", self.container["Id"]])
-            self.command(["docker", "stop", "-t", "120", self.container["Id"]], timeout=150)
-            stopped = self.inspect(self.container["Id"])
-            require(not stopped["State"]["Running"], "Source container did not stop")
-            require(stopped["State"].get("ExitCode") != 137 and not stopped["State"].get("OOMKilled"),
-                    "Source needed forced termination; verify in-flight usage before retrying")
             self.checkpoint("backup-original")
             shutil.copytree(str(self.data), str(self.report / "data-original"), symlinks=True)
             shutil.copy2(str(self.compose_file), str(self.report / "compose-original.yml"))
@@ -325,7 +378,16 @@ class Runner:
         self.checkpoint("snapshot-sqlite")
         target = self.report / "sqlite-current/db"
         target.mkdir(parents=True, mode=0o700)
-        snapshot_sqlite(self.data / "db/cpa_helper.sqlite3", target / "cpa_helper.sqlite3")
+        try:
+            snapshot_sqlite(self.data / "db/cpa_helper.sqlite3", target / "cpa_helper.sqlite3",
+                            timeout=self.snapshot_timeout, log=self.log)
+        finally:
+            if self.stop_for_snapshot:
+                # Restore the unchanged source before upgrading/importing the
+                # disposable snapshot, including on timeout or interruption.
+                self.restart_source()
+        if self.stop_for_snapshot:
+            self.checkpoint("sqlite-restored")
         # Upgrade only the disposable snapshot; never the source or recovery copy.
         self.app_command(["migrate"], sqlite=True)
 
@@ -379,13 +441,7 @@ class Runner:
             except MigrationError:
                 self.log("Could not stop the application; check its state manually.")
         elif self.restart_changed:
-            policy = self.container["HostConfig"]["RestartPolicy"]
-            restart = policy["Name"] or "no"
-            if restart == "on-failure" and policy.get("MaximumRetryCount"):
-                restart += ":" + str(policy["MaximumRetryCount"])
-            self.command(["docker", "update", "--restart=" + restart, self.container["Id"]])
-            self.command(["docker", "start", self.container["Id"]])
-            self.log("PostgreSQL was never activated; the original SQLite container has been restarted.")
+            self.restart_source()
 
     def run(self):
         try:
@@ -397,7 +453,9 @@ class Runner:
                 self.activate()
             else:
                 self.checkpoint("rehearsal-passed")
-                self.log("Rehearsal passed. Production was not stopped or switched; no second collector was started.")
+                self.log("Rehearsal passed. " + (
+                    "The original SQLite app was restored immediately after the snapshot. " if self.stop_for_snapshot else
+                    "Production was not stopped. ") + "No database switch or second collector was started.")
         except BaseException:
             self.recover()
             raise
@@ -413,6 +471,10 @@ def main():
     parser.add_argument("mode", choices=("rehearse", "migrate"))
     parser.add_argument("--root", required=True, type=Path, help="Installed CPA-Helper tenant directory")
     parser.add_argument("--traffic-paused", action="store_true", help="Confirm ingress stopped and usage queue/in-flight work drained")
+    parser.add_argument("--stop-for-snapshot", action="store_true",
+                        help="Rehearsal only: stop the app during snapshot, then immediately restore the original container")
+    parser.add_argument("--snapshot-timeout", type=int, default=1800, metavar="SECONDS",
+                        help="SQLite snapshot time limit in seconds (default: 1800)")
     args = parser.parse_args()
     try:
         require(sys.platform == "linux" and os.geteuid() == 0, "Run as root on the Linux Docker host")
@@ -436,7 +498,8 @@ def main():
                 raise MigrationError("Migration interrupted by signal")
 
             signal.signal(signal.SIGTERM, interrupted)
-            Runner(root, config, args.mode).run()
+            Runner(root, config, args.mode, snapshot_timeout=args.snapshot_timeout,
+                   stop_for_snapshot=args.stop_for_snapshot).run()
         return 0
     except (MigrationError, OSError, ValueError, KeyError) as error:
         # Parser errors are deliberately generic; never print configuration contents.

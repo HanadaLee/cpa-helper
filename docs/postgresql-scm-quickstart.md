@@ -41,6 +41,23 @@ python3 /usr/local/cpa-helper/cpa-helper_huachienergy/tools/migrate-postgres.py 
 
 完成显示 `rehearsal-passed`。演练数据库与报告保留供核查；每次演练使用新库，不复用、不自动删除任何数据库。核查后由管理员按脚本输出的确切库名回收演练库即可，正式库不会带 `_test_` 后缀。
 
+#### 快照超时或持续写入时
+
+快照默认限时 1800 秒，可用 `--snapshot-timeout 3600` 延长；每 15 秒输出页数进度、耗时和进度重置次数。旧版固定 300 秒且没有进度信息，不能仅凭超时报错判断是磁盘慢还是持续写入导致反复备份。
+
+- WAL 模式：固定只读事务快照，后续提交不会使备份反复重启，写入仍可继续。读快照释放前 WAL 可能增长，要保留足够磁盘空间。
+- 非 WAL 模式（例如 `delete`）：保留分批在线备份，不强行更改数据库日志模式、不长期持有阻塞业务写入的读锁；持续写入仍可能使进度重置。此时不要仅无限延长超时。
+
+允许短暂中断 CPA-Helper 页面、鉴权及采集服务时，可以显式加 `--stop-for-snapshot`：脚本正常停止原容器，取得一致快照后**立即恢复同一个 SQLite 容器及重启策略**，再升级副本、导入演练库；快照失败也尝试恢复。应用停止时间取决于停机和复制耗时，并非固定几秒；不停止上游模型请求时应确保采集队列能够保留暂停期间的数据。
+
+```bash
+python3 /usr/local/cpa-helper/cpa-helper_hanada/tools/migrate-postgres.py rehearse --root /usr/local/cpa-helper/cpa-helper_hanada --stop-for-snapshot --snapshot-timeout 3600
+```
+
+另一个实例替换路径中的 `hanada` 为 `huachienergy`。此选项仅适用于 `rehearse`；正式迁移原本就会停服，仍需先排空上游请求和采集队列。默认演练不会自动切换为停服模式。
+
+如果旧脚本停在 `snapshot-sqlite` 后超时，该次尚未导入或切换生产数据库，原实例仍使用 SQLite。更新脚本后可以直接重新演练，新运行会使用新目录和新演练库；不需要删除上次报告、生产数据或 `.database.env`。
+
 ### 3. 维护窗口正式切换
 
 先暂停该实例的模型入口/后台调用，等待在途请求结束、采集队列排空。脚本不能替你证明上游已经停写；`--traffic-paused` 是对这项前置条件的明确确认，不是绕过检查的通用 `--force`。

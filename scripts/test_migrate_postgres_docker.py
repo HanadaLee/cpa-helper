@@ -17,6 +17,7 @@ import tempfile
 import time
 import unittest
 import urllib.request
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("migration", Path(__file__).with_name("migrate-postgres.py"))
 migration = importlib.util.module_from_spec(spec)
@@ -102,6 +103,31 @@ class DockerAcceptance(unittest.TestCase):
             self.assertEqual((root / ".database.env").read_bytes(), b"")
             self.assertEqual(json.loads(self.cmd("docker", "inspect", container))[0]["Id"], original["Id"])
             self.assertEqual(json.loads((runner.report / "state.json").read_text())["phase"], "rehearsal-passed")
+
+            # Opt-in paused rehearsal restarts the same SQLite container before
+            # upgrading the copy or importing anything into PostgreSQL.
+            paused = migration.Runner(root, config, "rehearse", stop_for_snapshot=True)
+            app_command = paused.app_command
+            def restored_before_command(*args, **kwargs):
+                current = json.loads(self.cmd("docker", "inspect", container))[0]
+                self.assertEqual(current["Id"], original["Id"])
+                self.assertTrue(current["State"]["Running"])
+                self.assertEqual(current["HostConfig"]["RestartPolicy"]["Name"], "unless-stopped")
+                return app_command(*args, **kwargs)
+            paused.app_command = restored_before_command
+            paused.run()
+            self.assertEqual((root / ".database.env").read_bytes(), b"")
+            self.assertFalse(paused.restart_changed)
+
+            interrupted = migration.Runner(root, config, "rehearse", stop_for_snapshot=True)
+            with patch.object(migration, "snapshot_sqlite", side_effect=migration.MigrationError("synthetic snapshot timeout")):
+                with self.assertRaisesRegex(migration.MigrationError, "synthetic snapshot timeout"):
+                    interrupted.run()
+            current = json.loads(self.cmd("docker", "inspect", container))[0]
+            self.assertEqual(current["Id"], original["Id"])
+            self.assertTrue(current["State"]["Running"])
+            self.assertEqual(current["HostConfig"]["RestartPolicy"]["Name"], "unless-stopped")
+            self.assertEqual((root / ".database.env").read_bytes(), b"")
 
             wrong = migration.Runner(root, dict(config, DB_PASSWORD=secrets.token_hex(32)), "rehearse")
             with self.assertRaisesRegex(migration.MigrationError, "authentication failed"):

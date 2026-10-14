@@ -88,6 +88,115 @@ class MigrationTests(unittest.TestCase):
         self.assertNotIn(self.config["DB_PASSWORD"], str(raised.exception))
         self.assertNotIn(self.config["DB_PASSWORD"], (runner.report / "error.log").read_text())
 
+    def test_wal_snapshot_is_pinned_while_other_connection_keeps_writing(self):
+        self.assert_snapshot_with_concurrent_writes("wal")
+
+    def test_rollback_journal_snapshot_does_not_hold_write_blocking_read_lock(self):
+        self.assert_snapshot_with_concurrent_writes("delete")
+
+    def assert_snapshot_with_concurrent_writes(self, journal):
+        source, target = self.root / "busy.sqlite3", self.root / "snapshot.sqlite3"
+        connect = sqlite3.connect
+        with contextlib.closing(connect(str(source))) as writer:
+            writer.execute("PRAGMA journal_mode=" + journal)
+            writer.execute("PRAGMA wal_autocheckpoint=0")
+            writer.execute("CREATE TABLE sample(value INTEGER, payload BLOB)")
+            writer.execute("INSERT INTO sample VALUES (0, zeroblob(10485760))")
+            writer.commit()
+            writes, remaining = [], []
+
+            class ConcurrentBackup(sqlite3.Connection):
+                def backup(self, target, **kwargs):
+                    progress = kwargs["progress"]
+
+                    def concurrent_commit(status, left, total):
+                        remaining.append(left)
+                        if status == sqlite3.SQLITE_OK and len(writes) < 8:
+                            writer.execute("UPDATE sample SET value=value+1")
+                            writer.commit()
+                            writes.append(True)
+                        progress(status, left, total)
+
+                    kwargs["progress"] = concurrent_commit
+                    return super().backup(target, **kwargs)
+
+            def connection(*args, **kwargs):
+                if kwargs.get("uri"):
+                    kwargs["factory"] = ConcurrentBackup
+                return connect(*args, **kwargs)
+
+            logs = []
+            with patch.object(migration.sqlite3, "connect", side_effect=connection):
+                migration.snapshot_sqlite(source, target, log=logs.append)
+            self.assertGreater(len(writes), 0)
+            if journal == "wal":
+                self.assertTrue(all(a > b for a, b in zip(remaining, remaining[1:])), remaining)
+            else:
+                self.assertTrue(any(a <= b for a, b in zip(remaining, remaining[1:])), remaining)
+            self.assertEqual(writer.execute("SELECT value FROM sample").fetchone()[0], len(writes))
+            with contextlib.closing(connect(str(target))) as copied:
+                self.assertEqual(copied.execute("SELECT value FROM sample").fetchone()[0], 0 if journal == "wal" else len(writes))
+                self.assertEqual(copied.execute("PRAGMA quick_check").fetchone()[0], "ok")
+            if journal == "wal":
+                self.assertEqual(writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone(), (0, 0, 0))
+                self.assertIn("progress_resets=0", logs[-1])
+            self.assertIn("pinned_read=" + str(journal == "wal"), logs[0])
+
+    def test_snapshot_timeout_reports_progress_and_releases_read_transaction(self):
+        source, target = self.root / "timeout.sqlite3", self.root / "partial.sqlite3"
+        with contextlib.closing(sqlite3.connect(str(source))) as writer:
+            writer.execute("PRAGMA journal_mode=WAL")
+            writer.execute("CREATE TABLE sample(payload BLOB)")
+            writer.execute("INSERT INTO sample VALUES (zeroblob(10485760))")
+            writer.commit()
+            with patch.object(migration.time, "monotonic", side_effect=[0, 2]):
+                with self.assertRaisesRegex(migration.MigrationError, r"timed out.*journal=wal.*pages="):
+                    migration.snapshot_sqlite(source, target, timeout=1)
+            writer.execute("INSERT INTO sample VALUES (NULL)")
+            writer.commit()
+            self.assertEqual(writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone(), (0, 0, 0))
+
+    def test_completed_snapshot_is_not_rejected_when_final_sync_crosses_deadline(self):
+        source, target = self.root / "small.sqlite3", self.root / "done.sqlite3"
+        with contextlib.closing(sqlite3.connect(str(source))) as db:
+            db.execute("CREATE TABLE sample(value INTEGER)")
+            db.commit()
+        logs = []
+        with patch.object(migration.time, "monotonic", side_effect=[0, 2]):
+            migration.snapshot_sqlite(source, target, timeout=1, log=logs.append)
+        self.assertIn("pinned_read=False", logs[0])
+
+    def test_stopped_rehearsal_restores_source_before_snapshot_upgrade(self):
+        for fails in (False, True):
+            with self.subTest(snapshot_fails=fails):
+                runner = self.runner("rehearse")
+                runner.stop_for_snapshot = True
+                runner.data = self.root / "data"
+                calls = []
+                runner.stop_source = lambda: calls.append("stop")
+                runner.restart_source = lambda: calls.append("restore")
+                runner.app_command = lambda *args, **kwargs: calls.append("upgrade")
+
+                def snapshot(*args, **kwargs):
+                    calls.append("snapshot")
+                    self.assertEqual(kwargs["timeout"], 1800)
+                    if fails:
+                        raise migration.MigrationError("synthetic snapshot failure")
+
+                with patch.object(migration, "snapshot_sqlite", side_effect=snapshot):
+                    if fails:
+                        with self.assertRaisesRegex(migration.MigrationError, "synthetic"):
+                            runner.backup()
+                    else:
+                        runner.backup()
+                self.assertEqual(calls, ["stop", "snapshot", "restore"] + ([] if fails else ["upgrade"]))
+
+    def test_stopped_snapshot_flag_is_rehearsal_only(self):
+        with self.assertRaisesRegex(migration.MigrationError, "only for rehearsal"):
+            migration.Runner(self.root, self.config, "migrate", stop_for_snapshot=True)
+        with self.assertRaisesRegex(migration.MigrationError, "positive"):
+            migration.Runner(self.root, self.config, "rehearse", snapshot_timeout=0)
+
     def test_pre_activation_failure_restores_only_original_container(self):
         runner = self.runner()
         runner.restart_changed = True

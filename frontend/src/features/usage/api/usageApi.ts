@@ -1,6 +1,7 @@
 import { apiClient } from '@/shared/api/apiClient'
 import type {
   TrendPoint,
+  UsageBillingResponse,
   UsageDistributionsResponse,
   UsageFilters,
   UsageOptionsResponse,
@@ -27,6 +28,10 @@ function filtersToParams(
     failed: filters.failed,
     request_id: filters.request_id,
   }
+}
+
+export function getUsageBilling(filters: UsageFilters): Promise<UsageBillingResponse> {
+  return apiClient.get<UsageBillingResponse>('/usage/billing', filtersToParams(filters))
 }
 
 export function getUsageSummary(filters: UsageFilters): Promise<UsageSummary> {

@@ -110,6 +110,14 @@ func (a *App) handleUsage(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	switch parts[0] {
+	case "billing":
+		if err := requireMethod(r, http.MethodGet); err != nil {
+			return err
+		}
+		if !user.IsAdmin {
+			return forbiddenError("费用核算仅限管理员查看")
+		}
+		return a.usageBilling(w, r, filters)
 	case "summary":
 		if err := requireMethod(r, http.MethodGet); err != nil {
 			return err

@@ -466,6 +466,31 @@ export interface UsageSummary {
   unpriced_records: number
 }
 
+export interface UsageBillingTotals {
+  cost_usd: number
+  records: number
+  failed_records: number
+  total_tokens: number
+  unpriced_records: number
+}
+
+export interface UsageBillingUser {
+  user_id: number | null
+  username: string
+  label: string
+}
+
+export interface UsageBillingItem extends UsageBillingUser, UsageBillingTotals {}
+
+export interface UsageBillingResponse {
+  start: string
+  end: string
+  summary: UsageBillingTotals
+  active_users: number
+  items: UsageBillingItem[]
+  users: UsageBillingUser[]
+}
+
 export interface TrendPoint {
   bucket: string
   records: number

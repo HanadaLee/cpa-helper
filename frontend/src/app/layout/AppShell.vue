@@ -45,6 +45,7 @@ import {
   Monitor,
   Moon,
   Network,
+  ReceiptText,
   Settings,
   Sun,
   UserRound,
@@ -152,6 +153,7 @@ interface NavigationItem {
 
 const adminMenuItems = computed<NavigationItem[]>(() => [
   { label: t('用量分析', 'Usage Analytics'), key: '/admin/usage', icon: BarChart3 },
+  { label: t('费用核算', 'Cost Accounting'), key: '/admin/billing', icon: ReceiptText },
   { label: t('请求明细', 'Request Records'), key: '/admin/records', icon: List },
   { label: t('用户管理', 'Users'), key: '/admin/users', icon: Users },
   { label: t('模型价格', 'Model Prices'), key: '/admin/pricing', icon: DollarSign },

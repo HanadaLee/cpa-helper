@@ -56,6 +56,12 @@ export const router = createRouter({
           meta: { requiresAdmin: true },
         },
         {
+          path: 'admin/billing',
+          name: 'admin-billing',
+          component: () => import('@/features/usage/views/UsageBillingView.vue'),
+          meta: { requiresAdmin: true },
+        },
+        {
           path: 'admin/records',
           name: 'admin-records',
           component: () => import('@/features/usage/views/UsageRecordsView.vue'),

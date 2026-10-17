@@ -25,7 +25,7 @@ test('billing downloads real Excel exports for all pages and selected filters', 
 
   const download = page.waitForEvent('download')
   const exported = page.waitForResponse(res => new URL(res.url()).pathname === '/api/usage/billing/export')
-  await page.getByRole('button', { name: '导出 Excel', exact: true }).click()
+  await page.getByRole('button', { name: '导出', exact: true }).click()
   const [file, response] = await Promise.all([download, exported])
   expect(response.status()).toBe(200)
   expect(response.headers()['content-type']).toContain('spreadsheetml.sheet')
@@ -50,10 +50,10 @@ test('billing downloads real Excel exports for all pages and selected filters', 
   await expect(page.locator('[data-billing-row]')).toHaveCount(1)
   await page.addInitScript(() => localStorage.setItem('cpa-helper-language', 'en'))
   await page.reload()
-  await expect(page.getByRole('button', { name: 'Export Excel', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeEnabled()
   const filteredDownload = page.waitForEvent('download')
   const filteredResponse = page.waitForResponse(res => new URL(res.url()).pathname === '/api/usage/billing/export')
-  await page.getByRole('button', { name: 'Export Excel', exact: true }).click()
+  await page.getByRole('button', { name: 'Export', exact: true }).click()
   const filtered = await filteredResponse
   expect(filtered.status()).toBe(200)
   const selected = new URL(filtered.url()).searchParams
@@ -65,7 +65,7 @@ test('billing downloads real Excel exports for all pages and selected filters', 
   expect((await filteredDownload).suggestedFilename()).toMatch(/^Cost-Accounting_.*\.xlsx$/)
 
   await page.route('**/api/usage/billing/export**', route => route.fulfill({ status: 503, json: { detail: { message: 'export unavailable' } } }))
-  await page.getByRole('button', { name: 'Export Excel', exact: true }).click()
+  await page.getByRole('button', { name: 'Export', exact: true }).click()
   await expect(page.getByText('export unavailable', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Export Excel', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeEnabled()
 })

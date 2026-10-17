@@ -209,7 +209,7 @@ onBeforeUnmount(() => { sequence++; window.clearInterval(timer) })
           <Spinner v-if="loading" data-icon="inline-start" /><RefreshCw v-else data-icon="inline-start" />{{ t('刷新', 'Refresh') }}
         </Button>
         <Button variant="outline" :disabled="!response || loading || exporting" @click="exportWorkbook">
-          <Spinner v-if="exporting" data-icon="inline-start" /><Download v-else data-icon="inline-start" />{{ t('导出 Excel', 'Export Excel') }}
+          <Spinner v-if="exporting" data-icon="inline-start" /><Download v-else data-icon="inline-start" />{{ t('导出', 'Export') }}
         </Button>
       </div>
     </div>

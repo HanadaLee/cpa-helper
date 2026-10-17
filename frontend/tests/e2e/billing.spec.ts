@@ -119,7 +119,7 @@ test('billing uses skeletons, rejects stale responses and surfaces load failure'
   })
   await page.goto('/admin/billing')
   await expect(page.locator('.billing-page [data-slot="skeleton"]').first()).toBeVisible()
-  await expect(page.getByRole('button', { name: '导出 Excel', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '导出', exact: true })).toBeDisabled()
   await page.getByRole('tab', { name: '昨日', exact: true }).click()
   await expect(page.locator('[data-billing-row]')).toHaveCount(50)
   release()
@@ -127,7 +127,7 @@ test('billing uses skeletons, rejects stale responses and surfaces load failure'
   await page.route('**/api/usage/billing**', route => route.fulfill({ status: 503, json: { detail: { message: '暂时不可用' } } }))
   await page.getByRole('button', { name: '刷新', exact: true }).click()
   await expect(page.getByText('加载失败', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: '导出 Excel', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '导出', exact: true })).toBeDisabled()
   await expect(page.locator('[data-billing-row]')).toHaveCount(0)
 })
 

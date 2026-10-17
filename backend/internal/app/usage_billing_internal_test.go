@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 	"time"
@@ -50,6 +53,7 @@ func TestUsageBillingFixedCostsAndRollups(t *testing.T) {
 			if len(before.Items) != 5 || len(before.Users) != 3 || before.Items[0].Username != "bob" || before.Items[4].Username != "idle" {
 				t.Fatalf("missing zero/orphan users or wrong order: %+v", before)
 			}
+			assertUsageBillingHTTPResponse(t, a, filters, before)
 			if _, err := a.rollupUsageBatch(ctx, usageRollupBatchSize); err != nil {
 				t.Fatal(err)
 			}
@@ -57,12 +61,14 @@ func TestUsageBillingFixedCostsAndRollups(t *testing.T) {
 			if err != nil || !reflect.DeepEqual(before, after) {
 				t.Fatalf("rollups changed bill: before=%+v after=%+v err=%v", before, after, err)
 			}
+			assertUsageBillingHTTPResponse(t, a, filters, after)
 			// Unaggregated tail must be counted once alongside existing rollups.
 			insert("alice", 140, 0.75, false, false)
 			tail, err := a.buildUsageBilling(ctx, filters)
 			if err != nil || tail.Summary.CostUSD != 5.25 || tail.Summary.Records != 6 {
 				t.Fatalf("tail: %+v %v", tail, err)
 			}
+			assertUsageBillingHTTPResponse(t, a, filters, tail)
 			partialStart, partialEnd := start.Add(30*time.Minute), start.Add(150*time.Minute)
 			partial, err := a.buildUsageBilling(ctx, UsageFilters{Start: &partialStart, End: &partialEnd})
 			if err != nil || partial.Summary.CostUSD != 4 || partial.Summary.Records != 5 {
@@ -73,6 +79,7 @@ func TestUsageBillingFixedCostsAndRollups(t *testing.T) {
 			if err != nil || len(filtered.Items) != 1 || filtered.Summary.CostUSD != 2 {
 				t.Fatalf("user filter: %+v %v", filtered, err)
 			}
+			assertUsageBillingHTTPResponse(t, a, filters, filtered)
 			model, provider, endpoint, failed := "model", "openai", "/v1/responses", true
 			filtered, err = a.buildUsageBilling(ctx, UsageFilters{Start: &start, End: &end, Model: &model, Provider: &provider, Endpoint: &endpoint, Failed: &failed})
 			if err != nil || filtered.Summary.Records != 1 || filtered.Summary.UnpricedRecords != 1 {
@@ -93,6 +100,7 @@ func TestUsageBillingFixedCostsAndRollups(t *testing.T) {
 			if err != nil || !reflect.DeepEqual(tail, retained) {
 				t.Fatalf("bill after detail deletion: %+v %v", retained, err)
 			}
+			assertUsageBillingHTTPResponse(t, a, UsageFilters{Start: &start, End: &end}, retained)
 			missing := -1
 			if _, err := a.buildUsageBilling(ctx, UsageFilters{Start: &start, End: &end, UserID: &missing}); err == nil {
 				t.Fatal("missing user exposed all users")
@@ -104,5 +112,33 @@ func TestUsageBillingFixedCostsAndRollups(t *testing.T) {
 				t.Fatal("empty range accepted")
 			}
 		})
+	}
+}
+
+// Exercise the actual HTTP writer, not only the in-memory aggregate. Its time
+// normalization must preserve the flat JSON contract, including zero and null.
+func assertUsageBillingHTTPResponse(t *testing.T, a *App, filters UsageFilters, want usageBillingResponse) {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "/api/usage/billing", nil)
+	recorder := httptest.NewRecorder()
+	if err := a.usageBilling(recorder, request, filters); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("billing HTTP status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	expectedJSON, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expected, actual map[string]any
+	if err := json.Unmarshal(expectedJSON, &expected); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &actual); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("billing HTTP fields changed or missing:\ngot  %s\nwant %s", recorder.Body.String(), expectedJSON)
 	}
 }

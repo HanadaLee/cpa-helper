@@ -30,8 +30,16 @@ type usageBillingUser struct {
 }
 
 type usageBillingItem struct {
-	usageBillingUser
-	usageBillingTotals
+	// Keep the HTTP DTO flat: the API's time-normalizing JSON writer does not
+	// flatten anonymous embedded fields like encoding/json does.
+	UserID          *int    `json:"user_id"`
+	Username        string  `json:"username"`
+	Label           string  `json:"label"`
+	CostUSD         float64 `json:"cost_usd"`
+	Records         int     `json:"records"`
+	FailedRecords   int     `json:"failed_records"`
+	TotalTokens     int     `json:"total_tokens"`
+	UnpricedRecords int     `json:"unpriced_records"`
 }
 
 type usageBillingResponse struct {
@@ -68,13 +76,17 @@ func (a *App) buildUsageBilling(ctx context.Context, filters UsageFilters) (usag
 	if err != nil {
 		return response, err
 	}
-	groups := map[string]*usageBillingItem{}
+	type billingGroup struct {
+		usageBillingUser
+		usageBillingTotals
+	}
+	groups := map[string]*billingGroup{}
 	for username, info := range users {
 		id := info.ID
 		user := usageBillingUser{UserID: &id, Username: username, Label: info.Name}
 		response.Users = append(response.Users, user)
 		if filters.UserID == nil || *filters.UserID == id {
-			groups[username] = &usageBillingItem{usageBillingUser: user}
+			groups[username] = &billingGroup{usageBillingUser: user}
 			if filters.UserID != nil {
 				name := username
 				filters.UsageUsername = &name
@@ -91,7 +103,7 @@ func (a *App) buildUsageBilling(ctx context.Context, filters UsageFilters) (usag
 		if item == nil {
 			// Preserve orphaned/unattributed usage so item totals reconcile with
 			// the platform total, including after a user is removed.
-			item = &usageBillingItem{usageBillingUser: usageBillingUser{Username: username, Label: username}}
+			item = &billingGroup{usageBillingUser: usageBillingUser{Username: username, Label: username}}
 			groups[username] = item
 		}
 		item.add(entry.metrics)
@@ -101,7 +113,11 @@ func (a *App) buildUsageBilling(ctx context.Context, filters UsageFilters) (usag
 		return response, err
 	}
 	for _, item := range groups {
-		response.Items = append(response.Items, *item)
+		response.Items = append(response.Items, usageBillingItem{
+			UserID: item.UserID, Username: item.Username, Label: item.Label,
+			CostUSD: item.CostUSD, Records: item.Records, FailedRecords: item.FailedRecords,
+			TotalTokens: item.TotalTokens, UnpricedRecords: item.UnpricedRecords,
+		})
 		if item.Records > 0 {
 			response.ActiveUsers++
 		}

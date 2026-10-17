@@ -30,13 +30,25 @@ func TestUsageBillingRequiresAdministrator(t *testing.T) {
 	}
 	requestJSONExpectStatus(t, handler, http.MethodGet, "/api/usage/billing", nil, nil, http.StatusUnauthorized)
 	var response struct {
-		Items []struct {
-			Username string `json:"username"`
-		} `json:"items"`
+		Items []map[string]any `json:"items"`
 	}
 	requestJSON(t, handler, http.MethodGet, "/api/usage/billing?scope=admin", nil, admin, &response)
 	if len(response.Items) != 2 {
 		t.Fatalf("expected both zero-usage users, got %+v", response)
+	}
+	for index, expected := range []struct{ username, label string }{{"admin", "Admin"}, {"member", "Member"}} {
+		item := response.Items[index]
+		if item["username"] != expected.username || item["label"] != expected.label {
+			t.Fatalf("missing user identity in billing HTTP response: %+v", item)
+		}
+		if id, ok := item["user_id"].(float64); !ok || id <= 0 {
+			t.Fatalf("invalid user_id in billing HTTP response: %+v", item)
+		}
+		for _, key := range []string{"cost_usd", "records", "failed_records", "total_tokens", "unpriced_records"} {
+			if value, ok := item[key].(float64); !ok || value != 0 {
+				t.Fatalf("zero-usage user must include numeric %s=0: %+v", key, item)
+			}
+		}
 	}
 	requestJSONExpectStatus(t, handler, http.MethodPost, "/api/usage/billing", nil, admin, http.StatusMethodNotAllowed)
 }

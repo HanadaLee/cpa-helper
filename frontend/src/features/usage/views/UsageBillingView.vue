@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { CircleCheck, Cpu, RefreshCw, Route, Server, UserRound } from '@lucide/vue'
+import { CircleCheck, Cpu, Download, RefreshCw, Route, Server, UserRound } from '@lucide/vue'
+import { toast } from 'vue-sonner'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,7 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { getUsageBilling, getUsageOptions } from '@/features/usage/api/usageApi'
+import { exportUsageBilling, getUsageBilling, getUsageOptions } from '@/features/usage/api/usageApi'
 import { useI18n } from '@/shared/i18n'
 import type { UsageBillingItem, UsageBillingResponse, UsageFilters, UsageOptionsResponse } from '@/shared/types/api'
 import DateTimeRangePicker from '@/shared/ui/DateTimeRangePicker.vue'
@@ -24,12 +25,13 @@ import { beijingDayRange, formatCompact, formatDateTime, formatInteger, formatLo
 type QuickRange = 'today' | 'yesterday' | 'last24h' | 'last3d' | 'last7d' | 'last30d'
 const route = useRoute()
 const router = useRouter()
-const { t, errorText } = useI18n()
+const { t, errorText, language } = useI18n()
 const response = ref<UsageBillingResponse | null>(null)
 const options = ref<UsageOptionsResponse | null>(null)
 const error = ref('')
 const optionsError = ref('')
 const loading = ref(false)
+const exporting = ref(false)
 const page = ref(1)
 const pageSize = ref(50)
 const dateRange = ref<[number, number]>(beijingDayRange())
@@ -167,6 +169,29 @@ function openRecords(item: UsageBillingItem) {
   void router.push({ path: '/admin/records', query })
 }
 function changePageSize(value: number) { pageSize.value = value; page.value = 1 }
+async function exportWorkbook() {
+  if (!response.value || loading.value || exporting.value) return
+  const filters = { ...loadedFilters.value }
+  const filenameTime = (value: string) => formatDateTime(value).replace(/:/g, '-').replace(/ /g, '_')
+  const filename = `${t('费用核算', 'Cost-Accounting')}_${filenameTime(response.value.start)}_${filenameTime(response.value.end)}.xlsx`
+  exporting.value = true
+  try {
+    const blob = await exportUsageBilling(filters, language.value)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.append(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    toast.success(t('费用核算表格已导出', 'Cost accounting spreadsheet exported'))
+  } catch (cause) {
+    toast.error(errorText(cause, '费用核算导出失败', 'Failed to export cost accounting'))
+  } finally {
+    exporting.value = false
+  }
+}
 watch(() => route.query, () => { page.value = 1; void refresh() }, { immediate: true })
 onMounted(() => {
   timer = window.setInterval(() => { if (!document.hidden) void refresh(true) }, 10_000)
@@ -182,6 +207,9 @@ onBeforeUnmount(() => { sequence++; window.clearInterval(timer) })
         <span v-if="refreshedAt" class="text-sm text-muted-foreground">{{ t('最近更新', 'Updated') }} {{ formatDateTime(refreshedAt) }}</span>
         <Button variant="outline" :disabled="loading" @click="refresh()">
           <Spinner v-if="loading" data-icon="inline-start" /><RefreshCw v-else data-icon="inline-start" />{{ t('刷新', 'Refresh') }}
+        </Button>
+        <Button variant="outline" :disabled="!response || loading || exporting" @click="exportWorkbook">
+          <Spinner v-if="exporting" data-icon="inline-start" /><Download v-else data-icon="inline-start" />{{ t('导出 Excel', 'Export Excel') }}
         </Button>
       </div>
     </div>

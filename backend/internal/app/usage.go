@@ -117,6 +117,12 @@ func (a *App) handleUsage(w http.ResponseWriter, r *http.Request) error {
 		if !user.IsAdmin {
 			return forbiddenError("费用核算仅限管理员查看")
 		}
+		if len(parts) == 2 && parts[1] == "export" {
+			return a.exportUsageBilling(w, r, filters)
+		}
+		if len(parts) != 1 {
+			return notFoundError("Not Found")
+		}
 		return a.usageBilling(w, r, filters)
 	case "summary":
 		if err := requireMethod(r, http.MethodGet); err != nil {

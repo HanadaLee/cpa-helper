@@ -34,6 +34,10 @@ export function getUsageBilling(filters: UsageFilters): Promise<UsageBillingResp
   return apiClient.get<UsageBillingResponse>('/usage/billing', filtersToParams(filters))
 }
 
+export function exportUsageBilling(filters: UsageFilters, language: string): Promise<Blob> {
+  return apiClient.getBlob('/usage/billing/export', { ...filtersToParams(filters), lang: language })
+}
+
 export function getUsageSummary(filters: UsageFilters): Promise<UsageSummary> {
   return apiClient.get<UsageSummary>('/usage/summary', filtersToParams(filters))
 }

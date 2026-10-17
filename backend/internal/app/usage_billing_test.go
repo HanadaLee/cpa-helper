@@ -25,10 +25,13 @@ func TestUsageBillingRequiresAdministrator(t *testing.T) {
 	member := requestJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]any{
 		"username": "member", "password": "member-password",
 	}, nil, nil)
-	for _, scope := range []string{"", "?scope=admin", "?scope=account", "?scope=shared"} {
-		requestJSONExpectStatus(t, handler, http.MethodGet, "/api/usage/billing"+scope, nil, member, http.StatusForbidden)
+	for _, path := range []string{"/api/usage/billing", "/api/usage/billing/export"} {
+		for _, scope := range []string{"", "?scope=admin", "?scope=account", "?scope=shared"} {
+			requestJSONExpectStatus(t, handler, http.MethodGet, path+scope, nil, member, http.StatusForbidden)
+		}
+		requestJSONExpectStatus(t, handler, http.MethodGet, path, nil, nil, http.StatusUnauthorized)
+		requestJSONExpectStatus(t, handler, http.MethodPost, path, nil, admin, http.StatusMethodNotAllowed)
 	}
-	requestJSONExpectStatus(t, handler, http.MethodGet, "/api/usage/billing", nil, nil, http.StatusUnauthorized)
 	var response struct {
 		Items []map[string]any `json:"items"`
 	}
@@ -50,5 +53,8 @@ func TestUsageBillingRequiresAdministrator(t *testing.T) {
 			}
 		}
 	}
-	requestJSONExpectStatus(t, handler, http.MethodPost, "/api/usage/billing", nil, admin, http.StatusMethodNotAllowed)
+	requestJSONExpectStatus(t, handler, http.MethodGet, "/api/usage/billing/export?user_id=-1", nil, admin, http.StatusNotFound)
+	requestJSONExpectStatus(t, handler, http.MethodGet, "/api/usage/billing/export?start=invalid", nil, admin, http.StatusUnprocessableEntity)
+	requestJSONExpectStatus(t, handler, http.MethodGet, "/api/usage/billing/export?start=2026-10-02&end=2026-10-01", nil, admin, http.StatusUnprocessableEntity)
+	requestJSONExpectStatus(t, handler, http.MethodGet, "/api/usage/billing/unknown", nil, admin, http.StatusNotFound)
 }

@@ -780,6 +780,8 @@ func (a *App) generateUniqueAPIKey(ctx context.Context) (string, error) {
 	return "", conflictError("生成 API KEY 失败，请重试")
 }
 
+// The first query argument is the Beijing month boundary for card progress totals.
+// Use deduction timestamps, not card edits, to date a permanent card's exhaustion.
 const userSelectColumns = `id, username, is_admin, nickname, CAST(disabled_at AS TEXT), password_hash, password_salt,
 	CAST(created_at AS TEXT), CAST(updated_at AS TEXT),
 	quota_weekly_usd, quota_daily_usd, CAST(quota_started_at AS TEXT),
@@ -791,10 +793,13 @@ const userSelectColumns = `id, username, is_admin, nickname, CAST(disabled_at AS
 	 AND activated_at IS NOT NULL AND (expires_at IS NULL OR julianday(expires_at) > julianday('now'))),
 	(SELECT COALESCE(SUM(amount_usd), 0) FROM quota_cards
 	 WHERE user_id = users.id AND kind = 'credit' AND revoked_at IS NULL
-	 AND activated_at IS NOT NULL AND (expires_at IS NULL OR julianday(expires_at) > julianday('now')))`
+	 AND activated_at IS NOT NULL AND (expires_at IS NULL OR julianday(expires_at) > julianday('now'))
+	 AND (expires_at IS NOT NULL OR amount_usd > used_usd OR
+	      COALESCE((SELECT MAX(julianday(d.created_at)) FROM quota_card_deductions d WHERE d.card_id = quota_cards.id),
+	               julianday(updated_at)) >= julianday(?)))`
 
 func (a *App) allUsers(ctx context.Context) ([]UserRecord, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT `+userSelectColumns+` FROM users ORDER BY id`)
+	rows, err := a.db.QueryContext(ctx, `SELECT `+userSelectColumns+` FROM users ORDER BY id`, quotaCardProgressMonthStart(time.Now()))
 	if err != nil {
 		return nil, err
 	}
@@ -859,7 +864,7 @@ func scanUser(scanner userScanner) (UserRecord, error) {
 }
 
 func (a *App) getUser(ctx context.Context, id int) (UserRecord, error) {
-	row := a.db.QueryRowContext(ctx, `SELECT `+userSelectColumns+` FROM users WHERE id = ?`, id)
+	row := a.db.QueryRowContext(ctx, `SELECT `+userSelectColumns+` FROM users WHERE id = ?`, quotaCardProgressMonthStart(time.Now()), id)
 	user, err := scanUser(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -871,7 +876,7 @@ func (a *App) getUser(ctx context.Context, id int) (UserRecord, error) {
 }
 
 func (a *App) userByUsername(ctx context.Context, username string) (UserRecord, error) {
-	row := a.db.QueryRowContext(ctx, `SELECT `+userSelectColumns+` FROM users WHERE username = ?`, username)
+	row := a.db.QueryRowContext(ctx, `SELECT `+userSelectColumns+` FROM users WHERE username = ?`, quotaCardProgressMonthStart(time.Now()), username)
 	return scanUser(row)
 }
 

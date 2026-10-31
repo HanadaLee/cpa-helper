@@ -97,7 +97,7 @@ func (a *App) updateUserQuota(ctx context.Context, userID int, payload userQuota
 		return UserQuotaStatusResponse{}, err
 	}
 	defer tx.Rollback()
-	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT "+userSelectColumns+" FROM users WHERE id = ?"+tx.ForUpdate(), userID))
+	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT "+userSelectColumns+" FROM users WHERE id = ?"+tx.ForUpdate(), quotaCardProgressMonthStart(time.Now()), userID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return UserQuotaStatusResponse{}, notFoundError("用户不存在")
 	}
@@ -170,7 +170,7 @@ func (a *App) applyQuotaCharge(ctx context.Context, record UsageRecord) error {
 		return err
 	}
 	defer tx.Rollback()
-	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT "+userSelectColumns+" FROM users WHERE username = ?"+tx.ForUpdate(), *record.UsageUsername))
+	user, err := scanUser(tx.QueryRowContext(ctx, "SELECT "+userSelectColumns+" FROM users WHERE username = ?"+tx.ForUpdate(), quotaCardProgressMonthStart(time.Now()), *record.UsageUsername))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}

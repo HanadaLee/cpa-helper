@@ -88,6 +88,11 @@ func quotaCardsForUser(ctx context.Context, db quotaQuerier, userID int) ([]Quot
 	return cards, rows.Err()
 }
 
+func quotaCardProgressMonthStart(now time.Time) string {
+	local := now.In(appTimeLocation)
+	return dbTime(time.Date(local.Year(), local.Month(), 1, 0, 0, 0, 0, appTimeLocation))
+}
+
 type quotaTargets struct {
 	UserIDs  []int `json:"user_ids"`
 	AllUsers bool  `json:"all_users"`
@@ -533,7 +538,7 @@ func (a *App) resetUserQuotas(ctx context.Context, actorID int, target quotaTarg
 		}
 	}
 	for _, id := range ids {
-		user, err := scanUser(tx.QueryRowContext(ctx, "SELECT "+userSelectColumns+" FROM users WHERE id = ?", id))
+		user, err := scanUser(tx.QueryRowContext(ctx, "SELECT "+userSelectColumns+" FROM users WHERE id = ?", quotaCardProgressMonthStart(now), id))
 		if err != nil {
 			return 0, err
 		}

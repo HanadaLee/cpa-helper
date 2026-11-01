@@ -407,6 +407,23 @@ func (a *App) listUpstreamSections(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
+	native, err := a.loadUpstreamsV8(r, cfg)
+	if err != nil {
+		return err
+	}
+	if native != nil {
+		sections := make(map[string]any, len(upstreamSectionNames))
+		for _, name := range upstreamSectionNames {
+			items, err := upstreamV8Items(native.Groups[upstreamV8Family(name)], name)
+			if err != nil {
+				return err
+			}
+			sections[name] = items
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, map[string]any{"sections": sections, "api_version": 8, "revision": native.Revision})
+		return nil
+	}
 	_, payload, err := a.keeperRequest(
 		r.Context(),
 		cfg,
@@ -447,6 +464,19 @@ func (a *App) getUpstreamSection(w http.ResponseWriter, r *http.Request, section
 	if err != nil {
 		return err
 	}
+	native, err := a.loadUpstreamsV8(r, cfg)
+	if err != nil {
+		return err
+	}
+	if native != nil {
+		items, err := upstreamV8Items(native.Groups[upstreamV8Family(section)], section)
+		if err != nil {
+			return err
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, map[string]any{"items": items, "api_version": 8, "revision": native.Revision})
+		return nil
+	}
 	_, payload, err := a.keeperRequest(
 		r.Context(),
 		cfg,
@@ -468,10 +498,21 @@ func (a *App) getUpstreamSection(w http.ResponseWriter, r *http.Request, section
 }
 
 func (a *App) replaceUpstreamSection(w http.ResponseWriter, r *http.Request, section string) error {
-	var items []any
-	if err := decodeJSON(r, &items); err != nil {
+	var body json.RawMessage
+	if err := decodeJSON(r, &body); err != nil {
 		return err
 	}
+	var request struct {
+		Items      []any  `json:"items"`
+		APIVersion int    `json:"api_version"`
+		Revision   string `json:"revision"`
+	}
+	if err := json.Unmarshal(body, &request.Items); err != nil {
+		if err := json.Unmarshal(body, &request); err != nil || request.APIVersion != 8 || request.Items == nil {
+			return validationError("上游配置必须是 JSON 对象数组")
+		}
+	}
+	items := request.Items
 	if len(items) > 10000 {
 		return validationError("单个上游类型最多允许 10000 条配置")
 	}
@@ -484,6 +525,37 @@ func (a *App) replaceUpstreamSection(w http.ResponseWriter, r *http.Request, sec
 	cfg, err := a.loadConfig(r.Context())
 	if err != nil {
 		return err
+	}
+	native, err := a.loadUpstreamsV8(r, cfg)
+	if err != nil {
+		return err
+	}
+	if native != nil {
+		if request.APIVersion != 8 || request.Revision != native.Revision {
+			return conflictError("CPA 配置已被修改，请重新加载并核对后再保存")
+		}
+		groups, err := rebuildUpstreamsV8(native.Groups[upstreamV8Family(section)], items, section)
+		if err != nil {
+			return err
+		}
+		payload, err := json.Marshal(groups)
+		if err != nil {
+			return err
+		}
+		response, _, err := a.keeperRawRequest(r.Context(), cfg, http.MethodPut,
+			"/v8/management/config/api-keys/"+upstreamV8Family(section), nil, payload, "application/json",
+			time.Duration(cfg.CodexKeeper.CPATimeoutSeconds)*time.Second, cpaConfigMaxBytes, http.Header{"If-Match": {request.Revision}})
+		if response != nil && (response.StatusCode == http.StatusPreconditionFailed || response.StatusCode == http.StatusPreconditionRequired) {
+			return conflictError("CPA 配置已被修改，请重新加载并核对后再保存")
+		}
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+		return nil
+	}
+	if request.APIVersion != 0 {
+		return conflictError("CPA 配置接口已变更，请重新加载后再保存")
 	}
 	_, _, err = a.keeperRequest(
 		r.Context(),

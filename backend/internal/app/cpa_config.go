@@ -14,7 +14,9 @@ const (
 )
 
 type cpaConfigPayload struct {
-	Content string `json:"content"`
+	Content    string `json:"content"`
+	APIVersion int    `json:"api_version"`
+	Revision   string `json:"revision"`
 }
 
 func (a *App) handleCPAConfig(w http.ResponseWriter, r *http.Request) error {
@@ -37,7 +39,8 @@ func (a *App) handleCPAConfig(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, cpaConfigPayload{Content: content})
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, content)
 		return nil
 	case http.MethodPut:
 		payload, err := decodeCPAConfigPayload(r)
@@ -50,24 +53,50 @@ func (a *App) handleCPAConfig(w http.ResponseWriter, r *http.Request) error {
 		if len(payload.Content) > cpaConfigMaxBytes {
 			return validationError("CPA 配置内容超过大小限制")
 		}
-		if _, _, err := a.keeperRawRequest(
+		// Probe the current API, but never replace the draft's revision with the
+		// freshly read ETag: that would silently overwrite a concurrent edit.
+		current, err := a.loadCPAConfigYAML(r, cfg, timeout)
+		if err != nil {
+			return err
+		}
+		if payload.APIVersion != current.APIVersion {
+			return conflictError("CPA 配置接口已变更，请重新加载后再保存")
+		}
+		if current.APIVersion == 8 && !strongCPAConfigRevision(payload.Revision) {
+			return conflictError("CPA 配置版本缺失，请重新加载后再保存")
+		}
+		path := "/v0/management/config.yaml"
+		if current.APIVersion == 8 {
+			path = "/v8/management/config.yaml"
+		}
+		headers := http.Header{}
+		if payload.Revision != "" {
+			headers.Set("If-Match", payload.Revision)
+		}
+		response, _, err := a.keeperRawRequest(
 			r.Context(),
 			cfg,
 			http.MethodPut,
-			"/v0/management/config.yaml",
+			path,
 			nil,
 			[]byte(payload.Content),
 			"application/yaml",
 			timeout,
 			cpaConfigMaxBytes,
-		); err != nil {
+			headers,
+		)
+		if response != nil && (response.StatusCode == http.StatusPreconditionFailed || response.StatusCode == http.StatusPreconditionRequired) {
+			return conflictError("CPA 配置已被修改，请重新加载并核对后再保存")
+		}
+		if err != nil {
 			return err
 		}
 		content, err := a.loadCPAConfigYAML(r, cfg, timeout)
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, cpaConfigPayload{Content: content})
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, content)
 		return nil
 	default:
 		return methodNotAllowed()
@@ -87,20 +116,37 @@ func decodeCPAConfigPayload(r *http.Request) (cpaConfigPayload, error) {
 	return payload, nil
 }
 
-func (a *App) loadCPAConfigYAML(r *http.Request, cfg AppConfig, timeout time.Duration) (string, error) {
-	_, payload, err := a.keeperRawRequest(
-		r.Context(),
-		cfg,
-		http.MethodGet,
-		"/v0/management/config.yaml",
-		nil,
-		nil,
-		"",
-		timeout,
-		cpaConfigMaxBytes,
-	)
-	if err != nil {
-		return "", err
+func (a *App) loadCPAConfigYAML(r *http.Request, cfg AppConfig, timeout time.Duration) (cpaConfigPayload, error) {
+	for _, version := range []int{8, 0} {
+		path := "/v8/management/config.yaml"
+		if version == 0 {
+			path = "/v0/management/config.yaml"
+		}
+		response, payload, err := a.keeperRawRequest(r.Context(), cfg, http.MethodGet, path, nil, nil, "", timeout, cpaConfigMaxBytes)
+		if version == 8 && response != nil && response.StatusCode == http.StatusNotFound {
+			continue
+		}
+		if err != nil {
+			return cpaConfigPayload{}, err
+		}
+		revision := response.Header.Get("ETag")
+		if version == 8 && !strongCPAConfigRevision(revision) {
+			return cpaConfigPayload{}, validationError("CPA V8 未返回有效配置版本，请升级 CPA Core")
+		}
+		return cpaConfigPayload{Content: string(payload), APIVersion: version, Revision: revision}, nil
 	}
-	return string(payload), nil
+	return cpaConfigPayload{}, notFoundError("CPA 配置接口不存在")
+}
+
+func strongCPAConfigRevision(value string) bool {
+	// Core uses a quoted SHA-256. Do not accept weak tags, lists or wildcards.
+	if len(value) != 66 || value[0] != '"' || value[len(value)-1] != '"' {
+		return false
+	}
+	for _, c := range value[1 : len(value)-1] {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

@@ -28,17 +28,20 @@ export interface DiscoverUpstreamModelsRequest {
 
 interface UpstreamSectionsResponse {
   sections: Partial<Record<UpstreamSection, UpstreamItem[]>>
+  api_version?: number
+  revision?: string
 }
 
-export async function listUpstreamSections(): Promise<Record<UpstreamSection, UpstreamItem[]>> {
+export async function listUpstreamSections() {
   const response = await apiClient.get<UpstreamSectionsResponse>('/upstreams')
-  return Object.fromEntries(
+  const sections = Object.fromEntries(
     upstreamSectionNames.map((name) => [name, Array.isArray(response.sections[name]) ? response.sections[name] : []]),
   ) as Record<UpstreamSection, UpstreamItem[]>
+  return { sections, apiVersion: response.api_version ?? 0, revision: response.revision ?? '' }
 }
 
-export function replaceUpstreamSection(section: UpstreamSection, items: UpstreamItem[]) {
-  return apiClient.put<void>(`/upstreams/${section}`, items)
+export function replaceUpstreamSection(section: UpstreamSection, items: UpstreamItem[], apiVersion = 0, revision = '') {
+  return apiClient.put<void>(`/upstreams/${section}`, apiVersion === 8 ? { items, api_version: apiVersion, revision } : items)
 }
 
 export async function discoverUpstreamModels(payload: DiscoverUpstreamModelsRequest): Promise<DiscoveredUpstreamModel[]> {

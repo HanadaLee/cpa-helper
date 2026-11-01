@@ -164,6 +164,8 @@ const isSaving = ref(false)
 const mutatingKey = ref('')
 const loadError = ref('')
 const updatedAt = ref<Date | null>(null)
+const apiVersion = ref(0)
+const configRevision = ref('')
 const activeSection = ref<UpstreamSection>('gemini-api-key')
 const searchText = ref('')
 const drawerOpen = ref(false)
@@ -372,7 +374,9 @@ async function loadUpstreams(showSuccess = false) {
   loadError.value = ''
   try {
     const next = await listUpstreamSections()
-    for (const name of upstreamSectionNames) sections[name] = next[name]
+    for (const name of upstreamSectionNames) sections[name] = next.sections[name]
+    apiVersion.value = next.apiVersion
+    configRevision.value = next.revision
     updatedAt.value = new Date()
     if (showSuccess) message.success(t('上游配置已刷新', 'Upstream configurations refreshed'))
   } catch (error) {
@@ -590,6 +594,28 @@ function lineValues(value: string): string[] {
   return [...new Set(value.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean))]
 }
 
+function retainUneditedV8Fields(payload: UpstreamItem): UpstreamItem {
+  if (apiVersion.value !== 8 || !selectedItem.value) return payload
+  const baseline = formFromItem(selectedItem.value)
+  const fields: Record<string, (keyof UpstreamForm)[]> = {
+    models: ['models'], headers: ['headers'], 'base-url': ['baseUrl'], prefix: ['prefix'],
+    priority: ['priority'], 'disable-cooling': ['disableCooling'], name: ['name'],
+    'api-key-entries': ['apiKeyEntries'], disabled: ['disabled'], 'api-key': ['apiKey'],
+    'proxy-url': ['proxyUrl'], websockets: ['websockets'], 'excluded-models': ['excludedModels', 'disabled'],
+    cloak: ['cloakMode', 'cloakStrict', 'cloakCacheUserId', 'cloakSensitiveWords'],
+    'experimental-cch-signing': ['experimentalCCHSigning'],
+  }
+  // The old form normalizes empty/false values when composing an entire row.
+  // Do not turn an untouched inherited value into an explicit V8 key override.
+  for (const [field, properties] of Object.entries(fields)) {
+    if (properties.every(property => JSON.stringify(form[property]) === JSON.stringify(baseline[property]))) {
+      if (Object.prototype.hasOwnProperty.call(selectedItem.value, field)) payload[field] = selectedItem.value[field]
+      else delete payload[field]
+    }
+  }
+  return payload
+}
+
 function buildPayload(): UpstreamItem | null {
   const existing = selectedItem.value ? { ...selectedItem.value } : {}
   const models = formModels()
@@ -613,7 +639,9 @@ function buildPayload(): UpstreamItem | null {
         const apiKey = row.apiKey.trim()
         if (!apiKey) return null
         const entry: UpstreamItem = { ...(row.raw ?? {}), 'api-key': apiKey }
-        setOptionalString(entry, 'proxy-url', row.proxyUrl)
+        if (apiVersion.value !== 8 || !row.raw || row.proxyUrl !== readString(row.raw, 'proxy-url')) {
+          setOptionalString(entry, 'proxy-url', row.proxyUrl)
+        }
         return entry
       })
       .filter((entry): entry is UpstreamItem => entry !== null)
@@ -625,7 +653,7 @@ function buildPayload(): UpstreamItem | null {
     existing['base-url'] = baseUrl
     existing['api-key-entries'] = entries
     existing.disabled = form.disabled
-    return existing
+    return retainUneditedV8Fields(existing)
   }
 
   const apiKey = form.apiKey.trim()
@@ -661,7 +689,7 @@ function buildPayload(): UpstreamItem | null {
     if (form.experimentalCCHSigning) existing['experimental-cch-signing'] = true
     else delete existing['experimental-cch-signing']
   }
-  return existing
+  return retainUneditedV8Fields(existing)
 }
 
 async function saveUpstream() {
@@ -672,8 +700,9 @@ async function saveUpstream() {
     const current = [...sections[activeSection.value]]
     if (editingIndex.value >= 0) current.splice(editingIndex.value, 1, payload)
     else current.push(payload)
-    await replaceUpstreamSection(activeSection.value, current)
+    await replaceUpstreamSection(activeSection.value, current, apiVersion.value, configRevision.value)
     sections[activeSection.value] = current
+    if (apiVersion.value === 8) await loadUpstreams()
     drawerOpen.value = false
     updatedAt.value = new Date()
     message.success(editingIndex.value >= 0 ? t('上游配置已更新', 'Upstream updated') : t('上游配置已创建', 'Upstream created'))
@@ -698,8 +727,9 @@ async function toggleUpstream(row: UpstreamTableRow, enabled: boolean) {
       else delete item['excluded-models']
     }
     next.splice(row.index, 1, item)
-    await replaceUpstreamSection(activeSection.value, next)
+    await replaceUpstreamSection(activeSection.value, next, apiVersion.value, configRevision.value)
     sections[activeSection.value] = next
+    if (apiVersion.value === 8) await loadUpstreams()
     message.success(enabled ? t('上游已启用', 'Upstream enabled') : t('上游已停用', 'Upstream disabled'))
   } catch (error) {
     message.error(errorText(error, '更新上游状态失败', 'Failed to update upstream status'))
@@ -725,8 +755,9 @@ function confirmDelete(row: UpstreamTableRow) {
       mutatingKey.value = row.key
       try {
         const next = sections[activeSection.value].filter((_, index) => index !== row.index)
-        await replaceUpstreamSection(activeSection.value, next)
+        await replaceUpstreamSection(activeSection.value, next, apiVersion.value, configRevision.value)
         sections[activeSection.value] = next
+        if (apiVersion.value === 8) await loadUpstreams()
         message.success(t('上游已删除', 'Upstream deleted'))
       } catch (error) {
         message.error(errorText(error, '删除上游失败', 'Failed to delete upstream'))

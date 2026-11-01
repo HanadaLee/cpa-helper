@@ -18,6 +18,7 @@ import { getCPAConfig, updateCPAConfig } from '@/features/settings/api/settingsA
 import { useI18n } from '@/shared/i18n'
 import { cpaConfigFields, cpaConfigSections } from './cpaConfigFields'
 import type { CPAConfigFieldDefinition } from './cpaConfigFields'
+import { cpaConfigPath } from './cpaConfigPaths'
 
 type ConfigValue = string | boolean
 
@@ -29,6 +30,8 @@ const activeSection = ref('server')
 const editorMode = ref<'visual' | 'source'>('visual')
 const sourceContent = ref('')
 const sourceBaseline = ref('')
+const apiVersion = ref(0)
+const revision = ref('')
 const values = reactive<Record<string, ConfigValue>>({})
 const valueBaseline = ref<Record<string, ConfigValue>>({})
 
@@ -88,8 +91,8 @@ function valueAtPath(root: unknown, path: string[]): unknown {
 }
 
 function readFieldValue(root: unknown, field: CPAConfigFieldDefinition): ConfigValue {
-  let raw = valueAtPath(root, field.path)
-  if (field.key === 'rm-panel-repo' && (raw === undefined || raw === null)) {
+  let raw = valueAtPath(root, cpaConfigPath(field, apiVersion.value))
+  if (apiVersion.value === 0 && field.key === 'rm-panel-repo' && (raw === undefined || raw === null)) {
     raw = valueAtPath(root, ['remote-management', 'panel-repo'])
   }
   switch (field.kind) {
@@ -137,17 +140,18 @@ function writeFieldValue(document: ReturnType<typeof parseDocument>, field: CPAC
     return
   }
   const value = values[field.key]
+  const path = cpaConfigPath(field, apiVersion.value)
   if (field.key === 'rm-panel-repo') {
-    document.deleteIn(['remote-management', 'panel-repo'])
+    document.deleteIn([apiVersion.value === 8 ? 'management' : 'remote-management', 'panel-repo'])
   }
   switch (field.kind) {
     case 'boolean':
-      document.setIn(field.path, value === true)
+      document.setIn(path, value === true)
       break
     case 'number': {
       const text = String(value).trim()
       if (text === '') {
-        document.deleteIn(field.path)
+        document.deleteIn(path)
         break
       }
       if (!/^-?\d+$/.test(text) || !Number.isSafeInteger(Number(text))) {
@@ -157,11 +161,11 @@ function writeFieldValue(document: ReturnType<typeof parseDocument>, field: CPAC
       if (field.key === 'port' && (number < 1 || number > 65535)) {
         throw new Error(t('监听端口必须在 1 到 65535 之间', 'Listen port must be between 1 and 65535'))
       }
-      document.setIn(field.path, number)
+      document.setIn(path, number)
       break
     }
     case 'string-list':
-      document.setIn(field.path, lines(String(value)))
+      document.setIn(path, lines(String(value)))
       break
     case 'integer-list': {
       const items = lines(String(value))
@@ -169,7 +173,7 @@ function writeFieldValue(document: ReturnType<typeof parseDocument>, field: CPAC
       if (integers.some(item => !Number.isSafeInteger(item) || item < 0)) {
         throw new Error(t(`${field.labelZH}只能包含非负整数`, `${field.labelEN} may only contain non-negative integers`))
       }
-      document.setIn(field.path, integers)
+      document.setIn(path, integers)
       break
     }
     case 'yaml': {
@@ -184,18 +188,18 @@ function writeFieldValue(document: ReturnType<typeof parseDocument>, field: CPAC
       if (!Array.isArray(parsed)) {
         throw new Error(t(`${field.labelZH}必须是 YAML 数组`, `${field.labelEN} must be a YAML array`))
       }
-      document.setIn(field.path, parsed)
+      document.setIn(path, parsed)
       break
     }
     case 'select':
       if (field.key === 'disable-image-generation' && (value === 'true' || value === 'false')) {
-        document.setIn(field.path, value === 'true')
+        document.setIn(path, value === 'true')
       } else {
-        document.setIn(field.path, String(value))
+        document.setIn(path, String(value))
       }
       break
     default:
-      document.setIn(field.path, String(value))
+      document.setIn(path, String(value))
   }
 }
 
@@ -224,6 +228,8 @@ async function loadConfig() {
   loadError.value = ''
   try {
     const response = await getCPAConfig()
+    apiVersion.value = response.api_version ?? 0
+    revision.value = response.revision ?? ''
     applyContent(response.content)
     isLoaded.value = true
   } catch (error) {
@@ -245,7 +251,9 @@ async function saveSettings() {
   if (!isLoaded.value || !isDirty.value) {
     return
   }
-  const response = await updateCPAConfig({ content: composedContent() })
+  const response = await updateCPAConfig({ content: composedContent(), api_version: apiVersion.value, revision: revision.value })
+  apiVersion.value = response.api_version ?? 0
+  revision.value = response.revision ?? ''
   applyContent(response.content)
 }
 
@@ -320,7 +328,7 @@ onMounted(loadConfig)
               <p>{{ t(section.descriptionZH, section.descriptionEN) }}</p>
             </div>
             <FieldGroup class="cpa-config-grid">
-              <template v-for="field in section.fields" :key="field.key">
+              <template v-for="field in section.fields.filter(item => apiVersion !== 8 || item.key !== 'gemini-cli-endpoint')" :key="field.key">
                 <Field
                   v-if="field.kind === 'boolean'"
                   orientation="horizontal"

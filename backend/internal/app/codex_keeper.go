@@ -3859,10 +3859,15 @@ func (a *App) keeperRequest(ctx context.Context, cfg AppConfig, method, path str
 	return lastResponse, lastPayload, lastErr
 }
 
-func (a *App) keeperRawRequest(ctx context.Context, cfg AppConfig, method, path string, query url.Values, body []byte, contentType string, timeout time.Duration, responseLimit int64) (*http.Response, []byte, error) {
+func (a *App) keeperRawRequest(ctx context.Context, cfg AppConfig, method, path string, query url.Values, body []byte, contentType string, timeout time.Duration, responseLimit int64, extraHeaders ...http.Header) (*http.Response, []byte, error) {
 	attempts := keeperRequestAttempts(cfg.CodexKeeper)
 	target := makeURL(cfg.Collector.CLIProxyURL, path, query)
 	headers := managementHeaders(cfg.Collector.ManagementKey)
+	for _, extra := range extraHeaders {
+		for key, values := range extra {
+			headers[key] = append([]string(nil), values...)
+		}
+	}
 	var lastResponse *http.Response
 	var lastPayload []byte
 	var lastErr error

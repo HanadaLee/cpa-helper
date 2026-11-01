@@ -3,6 +3,8 @@ import type { BrandingResponse, CollectorStatus, SettingsResponse, SettingsUpdat
 
 export interface CPAConfigResponse {
   content: string
+  api_version?: number
+  revision?: string
 }
 
 export function getBranding(): Promise<BrandingResponse> {

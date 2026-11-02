@@ -91,19 +91,23 @@ func upstreamV8Items(groups []map[string]any, section string) ([]any, error) {
 func (a *App) loadUpstreamsV8(r *http.Request, cfg AppConfig) (*upstreamV8Snapshot, error) {
 	response, payload, err := a.keeperRequest(r.Context(), cfg, http.MethodGet,
 		"/v8/management/config/api-keys", nil, nil, time.Duration(cfg.CodexKeeper.CPATimeoutSeconds)*time.Second)
+	revision := ""
+	if response != nil {
+		revision = cpaConfigRevisionFromETag(response.Header.Get("ETag"))
+	}
 	if response != nil && response.StatusCode == http.StatusNotFound {
-		if strongCPAConfigRevision(response.Header.Get("ETag")) {
-			return &upstreamV8Snapshot{Groups: map[string][]map[string]any{}, Revision: response.Header.Get("ETag")}, nil
+		if revision != "" {
+			return &upstreamV8Snapshot{Groups: map[string][]map[string]any{}, Revision: revision}, nil
 		}
 		return nil, nil // Only a missing V8 route permits the old Core contract.
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !strongCPAConfigRevision(response.Header.Get("ETag")) {
-		return nil, validationError("CPA V8 未返回有效配置版本，请升级 CPA Core")
+	if revision == "" {
+		return nil, validationError("CPA V8 配置响应缺少有效版本，请检查 CPA Core 或反向代理配置")
 	}
-	snapshot := &upstreamV8Snapshot{Revision: response.Header.Get("ETag")}
+	snapshot := &upstreamV8Snapshot{Revision: revision}
 	if err := json.Unmarshal(payload, &snapshot.Groups); err != nil {
 		return nil, validationError("CPA V8 上游配置响应格式无效")
 	}

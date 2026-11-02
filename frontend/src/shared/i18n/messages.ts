@@ -7,7 +7,7 @@ const exactServerMessages: MessagePair[] = [
   ['CPA 配置接口已变更，请重新加载后再保存', 'The CPA configuration API changed. Reload before saving.'],
   ['CPA 配置版本缺失，请重新加载后再保存', 'The CPA configuration revision is missing. Reload before saving.'],
   ['CPA 配置已被修改，请重新加载并核对后再保存', 'CPA configuration changed. Reload and review your changes before saving.'],
-  ['CPA V8 未返回有效配置版本，请升级 CPA Core', 'CPA V8 did not return a valid configuration revision. Upgrade CPA Core.'],
+  ['CPA V8 配置响应缺少有效版本，请检查 CPA Core 或反向代理配置', 'The CPA V8 configuration response is missing a valid revision. Check CPA Core or the reverse proxy configuration.'],
   ['CPA V8 上游密钥分组格式无效', 'Invalid CPA V8 upstream key group format'],
   ['CPA V8 上游配置响应格式无效', 'Invalid CPA V8 upstream configuration response'],
   ['CPA V8 上游引用无效，请重新加载', 'Invalid CPA V8 upstream reference. Reload the configuration.'],

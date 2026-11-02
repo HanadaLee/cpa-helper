@@ -130,8 +130,11 @@ func (a *App) loadCPAConfigYAML(r *http.Request, cfg AppConfig, timeout time.Dur
 			return cpaConfigPayload{}, err
 		}
 		revision := response.Header.Get("ETag")
-		if version == 8 && !strongCPAConfigRevision(revision) {
-			return cpaConfigPayload{}, validationError("CPA V8 未返回有效配置版本，请升级 CPA Core")
+		if version == 8 {
+			revision = cpaConfigRevisionFromETag(revision)
+			if revision == "" {
+				return cpaConfigPayload{}, validationError("CPA V8 配置响应缺少有效版本，请检查 CPA Core 或反向代理配置")
+			}
 		}
 		return cpaConfigPayload{Content: string(payload), APIVersion: version, Revision: revision}, nil
 	}
@@ -149,4 +152,16 @@ func strongCPAConfigRevision(value string) bool {
 		}
 	}
 	return true
+}
+
+func cpaConfigRevisionFromETag(value string) string {
+	// Core's application revision is the SHA-256 of the persisted config file,
+	// independent of the JSON/YAML response representation. Compression proxies
+	// may add W/ without changing that revision. Extract only this specific Core
+	// token; writes still send the original quoted hash for Core's exact check.
+	revision := strings.TrimPrefix(value, "W/")
+	if strongCPAConfigRevision(revision) {
+		return revision
+	}
+	return ""
 }

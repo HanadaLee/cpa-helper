@@ -1,7 +1,7 @@
 import { apiClient } from '@/shared/api/apiClient'
 import type {
-  LiteLLMProxySettings,
-  LiteLLMProxySettingsPayload,
+  PricingSyncProxySettings,
+  PricingSyncProxySettingsPayload,
   ModelPrice,
   ModelPriceCatalogResponse,
   ModelPricePayload,
@@ -29,18 +29,18 @@ export function deleteModelPrice(id: number): Promise<void> {
   return apiClient.delete(`/model-prices/${id}`)
 }
 
-export function syncLitellmModelPrices(): Promise<ModelPriceSyncResponse> {
-  return apiClient.post<ModelPriceSyncResponse>('/model-prices/sync/litellm')
+export function syncModelsDevModelPrices(): Promise<ModelPriceSyncResponse> {
+  return apiClient.post<ModelPriceSyncResponse>('/model-prices/sync/models-dev')
 }
 
-export function getLiteLLMProxySettings(): Promise<LiteLLMProxySettings> {
-  return apiClient.get<LiteLLMProxySettings>('/model-prices/litellm-proxy')
+export function getPricingSyncProxySettings(): Promise<PricingSyncProxySettings> {
+  return apiClient.get<PricingSyncProxySettings>('/model-prices/sync-proxy')
 }
 
-export function updateLiteLLMProxySettings(
-  payload: LiteLLMProxySettingsPayload,
-): Promise<LiteLLMProxySettings> {
-  return apiClient.put<LiteLLMProxySettings>('/model-prices/litellm-proxy', payload)
+export function updatePricingSyncProxySettings(
+  payload: PricingSyncProxySettingsPayload,
+): Promise<PricingSyncProxySettings> {
+  return apiClient.put<PricingSyncProxySettings>('/model-prices/sync-proxy', payload)
 }
 
 export function getPricingHolidayCalendar(year: number): Promise<PricingHolidayCalendar> {

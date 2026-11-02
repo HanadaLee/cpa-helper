@@ -73,18 +73,18 @@ import {
 import {
   createModelPrice,
   deleteModelPrice,
-  getLiteLLMProxySettings,
+  getPricingSyncProxySettings,
   getPricingHolidayCalendar,
   listModelPriceCatalog,
   listModelPrices,
-  syncLitellmModelPrices,
-  updateLiteLLMProxySettings,
+  syncModelsDevModelPrices,
+  updatePricingSyncProxySettings,
   updateModelPrice,
   syncPricingHolidayCalendar,
   updatePricingCalendarSettings,
 } from '@/features/pricing/api/pricingApi'
 import type {
-  LiteLLMProxySettingsPayload,
+  PricingSyncProxySettingsPayload,
   ModelPrice,
   ModelPriceCatalogResponse,
   ModelPricePayload,
@@ -95,8 +95,8 @@ import { useI18n } from '@/shared/i18n'
 import FilterCombobox from '@/shared/ui/FilterCombobox.vue'
 import TablePaginationFooter from '@/shared/ui/TablePaginationFooter.vue'
 
-type PriceRowStatus = 'missing' | 'litellm' | 'manual'
-type PriceStatusFilter = 'cpa' | 'missing' | 'litellm' | 'manual' | 'library'
+type PriceRowStatus = 'missing' | 'synced' | 'manual'
+type PriceStatusFilter = 'cpa' | 'missing' | 'synced' | 'manual' | 'library'
 type BillingUnit = 'token' | 'request'
 type PriceFieldName = keyof Pick<
   ModelPrice,
@@ -209,7 +209,7 @@ const form = reactive<ModelPricePayload>({
   long_context_peak_cache_read_usd_per_million: 0,
   long_context_peak_cache_creation_usd_per_million: 0,
 })
-const proxyForm = reactive<LiteLLMProxySettingsPayload>({
+const proxyForm = reactive<PricingSyncProxySettingsPayload>({
   enabled: false,
   proxy_url: '',
 })
@@ -264,17 +264,17 @@ const providerOptions = computed(() =>
     .map((provider) => ({ label: provider, value: provider })),
 )
 
-const liteLLMProxyHint = computed(() =>
+const pricingSyncProxyHint = computed(() =>
   t(
-    'LiteLLM 价格数据从 GitHub 下载；如果当前网络无法访问 GitHub，可以启用代理后再同步。',
-    'LiteLLM price data is downloaded from GitHub. If GitHub is not reachable from this network, enable a proxy and sync again.',
+    '价格数据来自 models.dev；如果当前网络无法访问，可以启用代理后再同步。',
+    'Price data is downloaded from models.dev. If it is not reachable from this network, enable a proxy and sync again.',
   ),
 )
 
 const statusOptions = computed<Array<{ label: string; value: PriceStatusFilter }>>(() => [
   { label: t('CPA 可用模型', 'CPA available models'), value: 'cpa' },
   { label: t('未定价', 'Unpriced'), value: 'missing' },
-  { label: 'LiteLLM', value: 'litellm' },
+  { label: t('自动同步', 'Synced'), value: 'synced' },
   { label: t('手动', 'Manual'), value: 'manual' },
   { label: t('仅有价格', 'Prices only'), value: 'library' },
 ])
@@ -350,7 +350,7 @@ function priceStatus(price: ModelPrice, fallbackModel: string): PriceRowStatus {
   if (!priceReadyForBilling(price, fallbackModel)) {
     return 'missing'
   }
-  return price.auto_synced ? 'litellm' : 'manual'
+  return price.auto_synced ? 'synced' : 'manual'
 }
 
 function rowMatchesStatus(row: PriceDisplayRow, status: PriceStatusFilter) {
@@ -410,12 +410,12 @@ const showLongContextFastUnsupported = computed(
 const priceSaveHint = computed(() =>
   isRequestPriceForm.value
     ? t(
-        'image 模型按每次成功调用固定金额计费；仅修改 FAST 或峰谷设置不会取消 LiteLLM 同步。',
-        'Image models are charged per successful call. Changing only FAST or peak/off-peak settings keeps LiteLLM sync enabled.',
+        'image 模型按每次成功调用固定金额计费；仅修改 FAST 或峰谷设置不会取消自动同步。',
+        'Image models are charged per successful call. Changing only FAST or peak/off-peak settings keeps price sync enabled.',
       )
     : t(
-        '基础价格修改后会转为手动价格；仅修改 FAST、长上下文或峰谷设置不会取消 LiteLLM 同步。',
-        'Changing base prices makes them manual. Changing only FAST, long-context or peak/off-peak settings keeps LiteLLM sync enabled.',
+        '基础价格修改后会转为手动价格；仅修改 FAST、长上下文或峰谷设置不会取消自动同步。',
+        'Changing base prices makes them manual. Changing only FAST, long-context or peak/off-peak settings keeps price sync enabled.',
       ),
 )
 
@@ -452,7 +452,7 @@ const priceMetrics = computed<PriceMetricCard[]>(() => [
   },
   {
     key: 'synced',
-    label: t('LiteLLM 同步', 'LiteLLM sync'),
+    label: t('自动同步', 'Price sync'),
     value: formatInteger(syncedPriceCount.value),
     footnote: t('自动维护', 'Auto maintained'),
     icon: RefreshCw,
@@ -719,17 +719,17 @@ async function savePrice() {
 async function syncPrices() {
   isSyncing.value = true
   try {
-    const result = await syncLitellmModelPrices()
+    const result = await syncModelsDevModelPrices()
     message.success(
       t(
-        `同步完成：LiteLLM 价格 ${result.imported} 条，手动价格保留 ${result.skipped_manual} 条`,
-        `Sync complete: ${result.imported} LiteLLM prices imported, ${result.skipped_manual} manual prices preserved`,
+        `同步完成：models.dev 价格 ${result.imported} 条，手动价格保留 ${result.skipped_manual} 条`,
+        `Sync complete: ${result.imported} models.dev prices imported, ${result.skipped_manual} manual prices preserved`,
       ),
     )
     await refresh()
   } catch (error) {
     const detail = errorText(error, '同步模型价格失败', 'Failed to sync model prices')
-    message.error(t(`${detail}。${liteLLMProxyHint.value}`, `${detail}. ${liteLLMProxyHint.value}`))
+    message.error(t(`${detail}。${pricingSyncProxyHint.value}`, `${detail}. ${pricingSyncProxyHint.value}`))
   } finally {
     isSyncing.value = false
   }
@@ -739,7 +739,7 @@ async function openProxySettings() {
   proxyModalOpen.value = true
   isProxyLoading.value = true
   try {
-    const settings = await getLiteLLMProxySettings()
+    const settings = await getPricingSyncProxySettings()
     proxyForm.enabled = settings.enabled
     proxyForm.proxy_url = settings.proxy_url
   } catch (error) {
@@ -750,7 +750,7 @@ async function openProxySettings() {
 }
 
 async function saveProxySettings() {
-  const payload: LiteLLMProxySettingsPayload = {
+  const payload: PricingSyncProxySettingsPayload = {
     enabled: proxyForm.enabled,
     proxy_url: proxyForm.proxy_url.trim(),
   }
@@ -760,7 +760,7 @@ async function saveProxySettings() {
   }
   isProxySaving.value = true
   try {
-    const saved = await updateLiteLLMProxySettings(payload)
+    const saved = await updatePricingSyncProxySettings(payload)
     proxyForm.enabled = saved.enabled
     proxyForm.proxy_url = saved.proxy_url
     proxyModalOpen.value = false
@@ -895,14 +895,16 @@ function priceStatusLabel(row: PriceDisplayRow): string {
   if (row.status === 'missing') {
     return t('未定价', 'Unpriced')
   }
-  return row.status === 'litellm' ? 'LiteLLM' : t('手动', 'Manual')
+  return row.status === 'synced'
+    ? (row.price?.source === 'models.dev' ? 'models.dev' : t('历史同步', 'Legacy sync'))
+    : t('手动', 'Manual')
 }
 
 function priceStatusVariant(row: PriceDisplayRow): 'destructive' | 'secondary' | 'outline' {
   if (row.status === 'missing') {
     return 'destructive'
   }
-  return row.status === 'litellm' ? 'secondary' : 'outline'
+  return row.status === 'synced' ? 'secondary' : 'outline'
 }
 
 onMounted(() => {
@@ -919,7 +921,7 @@ onMounted(() => {
         <Button variant="outline" :disabled="isSyncing" @click="syncPrices">
           <Spinner v-if="isSyncing" data-icon="inline-start" />
           <RefreshCw v-else data-icon="inline-start" />
-          {{ t('同步 LiteLLM', 'Sync LiteLLM') }}
+          {{ t('同步 models.dev', 'Sync models.dev') }}
         </Button>
         <Button variant="outline" :disabled="isSyncing" @click="openProxySettings">
           <Settings2 data-icon="inline-start" />
@@ -1376,35 +1378,35 @@ onMounted(() => {
       <DialogContent class="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-lg">
         <form class="flex flex-col gap-5" @submit.prevent="saveProxySettings">
           <DialogHeader>
-            <DialogTitle>{{ t('LiteLLM 代理配置', 'LiteLLM proxy settings') }}</DialogTitle>
+            <DialogTitle>{{ t('models.dev 代理配置', 'models.dev proxy settings') }}</DialogTitle>
             <DialogDescription>
-              {{ t('为 LiteLLM 价格同步配置网络代理。', 'Configure a network proxy for LiteLLM price synchronization.') }}
+              {{ t('为 models.dev 价格同步配置网络代理。', 'Configure a network proxy for models.dev price synchronization.') }}
             </DialogDescription>
           </DialogHeader>
 
           <Alert>
             <CircleAlert />
-            <AlertDescription>{{ liteLLMProxyHint }}</AlertDescription>
+            <AlertDescription>{{ pricingSyncProxyHint }}</AlertDescription>
           </Alert>
 
           <FieldGroup>
             <Field orientation="horizontal" class="proxy-switch-row">
               <FieldContent>
-                <FieldLabel for="litellm-proxy-enabled">{{ t('使用代理', 'Use proxy') }}</FieldLabel>
+                <FieldLabel for="pricing-sync-proxy-enabled">{{ t('使用代理', 'Use proxy') }}</FieldLabel>
                 <FieldDescription>
                   {{ t('同步时通过下方代理地址访问 GitHub。', 'Use the proxy URL below when synchronizing from GitHub.') }}
                 </FieldDescription>
               </FieldContent>
               <Switch
-                id="litellm-proxy-enabled"
+                id="pricing-sync-proxy-enabled"
                 v-model="proxyForm.enabled"
                 :disabled="isProxyLoading || isProxySaving"
               />
             </Field>
             <Field :data-disabled="!proxyForm.enabled || isProxyLoading || isProxySaving || undefined">
-              <FieldLabel for="litellm-proxy-url">{{ t('代理地址', 'Proxy URL') }}</FieldLabel>
+              <FieldLabel for="pricing-sync-proxy-url">{{ t('代理地址', 'Proxy URL') }}</FieldLabel>
               <Input
-                id="litellm-proxy-url"
+                id="pricing-sync-proxy-url"
                 v-model="proxyForm.proxy_url"
                 :disabled="!proxyForm.enabled || isProxyLoading || isProxySaving"
                 :placeholder="t('http://127.0.0.1:7890 或 socks5://127.0.0.1:1080', 'http://127.0.0.1:7890 or socks5://127.0.0.1:1080')"

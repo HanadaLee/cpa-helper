@@ -434,7 +434,7 @@ func TestModelPriceAPIRoundTripsLongContextRates(t *testing.T) {
 	}
 }
 
-func TestUpdateAutoSyncedPriceLocalOverridesKeepLiteLLMSync(t *testing.T) {
+func TestUpdateAutoSyncedPriceLocalOverridesKeepModelsDevSync(t *testing.T) {
 	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
 	app, err := New()
 	if err != nil {
@@ -490,8 +490,10 @@ func TestUpdateAutoSyncedPriceLocalOverridesKeepLiteLLMSync(t *testing.T) {
 	if !updated.OffPeakEnabled || updated.PeakInputUSDPerMillion != 0.5 || updated.LongContextPeakInputUSDPerMillion != 1.5 {
 		t.Fatalf("updated off-peak overrides = %#v", updated)
 	}
-	_, err = app.syncLiteLLMPrices(context.Background(), "https://example.com/prices.json", map[string]any{
-		"gpt-fast-sync": map[string]any{"litellm_provider": "openai", "input_cost_per_token": 0.000004},
+	_, err = app.syncModelsDevPrices(context.Background(), "https://example.com/prices.json", map[string]any{
+		"openai": map[string]any{"models": map[string]any{
+			"gpt-fast-sync": map[string]any{"cost": map[string]any{"input": 4, "output": 2}},
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -502,8 +504,8 @@ func TestUpdateAutoSyncedPriceLocalOverridesKeepLiteLLMSync(t *testing.T) {
 		t.Fatalf("prices after LiteLLM sync: %v, %v", prices, err)
 	}
 	synced = prices[0]
-	if synced.InputUSDPerMillion != 4 || !synced.OffPeakEnabled || synced.PeakInputUSDPerMillion != 0.5 || synced.LongContextPeakInputUSDPerMillion != 1.5 {
-		t.Fatalf("LiteLLM sync lost off-peak overrides: %#v", synced)
+	if synced.Source != "models.dev" || synced.InputUSDPerMillion != 4 || !synced.OffPeakEnabled || synced.PeakInputUSDPerMillion != 0.5 || synced.LongContextPeakInputUSDPerMillion != 1.5 {
+		t.Fatalf("models.dev sync lost off-peak overrides: %#v", synced)
 	}
 }
 
@@ -561,7 +563,7 @@ func TestUsageAggregatesClaudeCacheReadAndCreationTokens(t *testing.T) {
 	}
 }
 
-func TestSyncLiteLLMPricesReplacesLiteLLMSource(t *testing.T) {
+func TestSyncModelsDevPricesReplacesLegacySource(t *testing.T) {
 	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
 	app, err := New()
 	if err != nil {
@@ -596,27 +598,17 @@ func TestSyncLiteLLMPricesReplacesLiteLLMSource(t *testing.T) {
 	}
 
 	rawData := map[string]any{
-		"gpt-new-model": map[string]any{
-			"litellm_provider":            "openai",
-			"input_cost_per_token":        0.000001,
-			"output_cost_per_token":       0.000002,
-			"cache_read_input_token_cost": 0.0000001,
-		},
-		"claude-new-model": map[string]any{
-			"litellm_provider":                "anthropic",
-			"input_cost_per_token":            0.000003,
-			"output_cost_per_token":           0.000015,
-			"cache_read_input_token_cost":     0.0000003,
-			"cache_creation_input_token_cost": 0.00000375,
-		},
-		"manual-model": map[string]any{
-			"litellm_provider":     "openai",
-			"input_cost_per_token": 0.000001,
-		},
+		"openai": map[string]any{"models": map[string]any{
+			"gpt-new-model": map[string]any{"cost": map[string]any{"input": 1, "output": 2, "cache_read": 0.1}},
+			"manual-model":  map[string]any{"cost": map[string]any{"input": 1, "output": 2}},
+		}},
+		"anthropic": map[string]any{"models": map[string]any{
+			"claude-new-model": map[string]any{"cost": map[string]any{"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75}},
+		}},
 	}
-	result, err := app.syncLiteLLMPrices(context.Background(), "https://example.com/prices.json", rawData)
+	result, err := app.syncModelsDevPrices(context.Background(), "https://example.com/prices.json", rawData)
 	if err != nil {
-		t.Fatalf("syncLiteLLMPrices failed: %v", err)
+		t.Fatalf("syncModelsDevPrices failed: %v", err)
 	}
 	if result["imported"].(int) != 2 || result["skipped_manual"].(int) != 1 {
 		t.Fatalf("sync result = %#v, want imported 2 skipped_manual 1", result)
@@ -626,8 +618,8 @@ func TestSyncLiteLLMPricesReplacesLiteLLMSource(t *testing.T) {
 	if err := app.db.QueryRow(`SELECT COUNT(*) FROM model_prices WHERE source = 'litellm' AND model = 'old-litellm-model'`).Scan(&oldCount); err != nil {
 		t.Fatalf("query old litellm count: %v", err)
 	}
-	if oldCount != 0 {
-		t.Fatalf("old litellm rows = %d, want 0", oldCount)
+	if oldCount != 1 {
+		t.Fatalf("unmatched legacy rows = %d, want 1 preserved", oldCount)
 	}
 	var manualInput float64
 	if err := app.db.QueryRow(`SELECT input_usd_per_million FROM model_prices WHERE source = 'manual' AND model = 'manual-model'`).Scan(&manualInput); err != nil {
@@ -637,7 +629,7 @@ func TestSyncLiteLLMPricesReplacesLiteLLMSource(t *testing.T) {
 		t.Fatalf("manual price = %v, want preserved 9", manualInput)
 	}
 	var cacheRead, cacheCreation float64
-	if err := app.db.QueryRow(`SELECT cache_read_usd_per_million, cache_creation_usd_per_million FROM model_prices WHERE source = 'litellm' AND model = 'claude-new-model'`).Scan(&cacheRead, &cacheCreation); err != nil {
+	if err := app.db.QueryRow(`SELECT cache_read_usd_per_million, cache_creation_usd_per_million FROM model_prices WHERE source = 'models.dev' AND model = 'claude-new-model'`).Scan(&cacheRead, &cacheCreation); err != nil {
 		t.Fatalf("query claude price: %v", err)
 	}
 	if cacheRead != 0.3 || cacheCreation != 3.75 {
@@ -650,7 +642,7 @@ func TestSyncLiteLLMPricesReplacesLiteLLMSource(t *testing.T) {
 		SELECT input_usd_per_million, fast_enabled, fast_multiplier, long_context_enabled,
 		       long_context_threshold_tokens, long_context_input_usd_per_million,
 		       long_context_fast_unsupported
-		FROM model_prices WHERE source = 'litellm' AND model = 'gpt-new-model'
+		FROM model_prices WHERE source = 'models.dev' AND model = 'gpt-new-model'
 	`).Scan(&syncedInput, &fastEnabled, &fastMultiplier, &longEnabled, &longThreshold, &longInput, &longFastUnsupported); err != nil {
 		t.Fatalf("query customized LiteLLM price: %v", err)
 	}
@@ -879,7 +871,7 @@ func TestModelPriceCatalogTreatsImageWithoutRequestPriceAsUnpriced(t *testing.T)
 	}
 }
 
-func TestLiteLLMSyncUsesConfiguredHTTPProxy(t *testing.T) {
+func TestModelsDevSyncUsesConfiguredHTTPProxy(t *testing.T) {
 	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
 	targetCalls := 0
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -896,10 +888,9 @@ func TestLiteLLMSyncUsesConfiguredHTTPProxy(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"proxy-model": map[string]any{
-				"litellm_provider":     "openai",
-				"input_cost_per_token": 0.000001,
-			},
+			"openai": map[string]any{"models": map[string]any{
+				"proxy-model": map[string]any{"cost": map[string]any{"input": 1, "output": 2}},
+			}},
 		})
 	}))
 	defer proxy.Close()
@@ -921,11 +912,11 @@ func TestLiteLLMSyncUsesConfiguredHTTPProxy(t *testing.T) {
 		Enabled  bool   `json:"enabled"`
 		ProxyURL string `json:"proxy_url"`
 	}
-	requestJSONForPricingTest(t, handler, http.MethodGet, "/api/model-prices/litellm-proxy", nil, cookies, &settings)
+	requestJSONForPricingTest(t, handler, http.MethodGet, "/api/model-prices/sync-proxy", nil, cookies, &settings)
 	if settings.Enabled || settings.ProxyURL != "" {
 		t.Fatalf("default proxy settings = %#v, want disabled empty proxy", settings)
 	}
-	requestJSONForPricingTest(t, handler, http.MethodPut, "/api/model-prices/litellm-proxy", map[string]any{
+	requestJSONForPricingTest(t, handler, http.MethodPut, "/api/model-prices/sync-proxy", map[string]any{
 		"enabled":   true,
 		"proxy_url": proxy.URL,
 	}, cookies, &settings)
@@ -936,7 +927,7 @@ func TestLiteLLMSyncUsesConfiguredHTTPProxy(t *testing.T) {
 	var syncResult struct {
 		Imported int `json:"imported"`
 	}
-	requestJSONForPricingTest(t, handler, http.MethodPost, "/api/model-prices/sync/litellm", map[string]any{
+	requestJSONForPricingTest(t, handler, http.MethodPost, "/api/model-prices/sync/models-dev", map[string]any{
 		"source_url": target.URL + "/prices.json",
 	}, cookies, &syncResult)
 	if syncResult.Imported != 1 {
@@ -947,10 +938,10 @@ func TestLiteLLMSyncUsesConfiguredHTTPProxy(t *testing.T) {
 	}
 }
 
-func TestNormalizeLiteLLMProxyURLAcceptsSock5Alias(t *testing.T) {
-	normalized, err := normalizeLiteLLMProxyURL("sock5://127.0.0.1:1080")
+func TestNormalizePricingSyncProxyURLAcceptsSock5Alias(t *testing.T) {
+	normalized, err := normalizePricingSyncProxyURL("sock5://127.0.0.1:1080")
 	if err != nil {
-		t.Fatalf("normalizeLiteLLMProxyURL failed: %v", err)
+		t.Fatalf("normalizePricingSyncProxyURL failed: %v", err)
 	}
 	if normalized != "socks5://127.0.0.1:1080" {
 		t.Fatalf("normalized proxy URL = %q, want socks5://127.0.0.1:1080", normalized)

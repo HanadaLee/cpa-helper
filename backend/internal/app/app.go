@@ -531,7 +531,7 @@ type KeeperConfig struct {
 	AutoStartDaemon                   bool   `json:"auto_start_daemon"`
 }
 
-type LiteLLMProxyConfig struct {
+type PricingSyncProxyConfig struct {
 	Enabled  bool   `json:"enabled"`
 	ProxyURL string `json:"proxy_url"`
 }
@@ -561,7 +561,7 @@ type AppConfig struct {
 	Collector                  CollectorConfig             `json:"collector"`
 	CodexKeeper                KeeperConfig                `json:"codex_keeper"`
 	CodexKeeperPriorityRule    map[string]int              `json:"codex_keeper_priority_rules"`
-	LiteLLMProxy               LiteLLMProxyConfig          `json:"litellm_proxy"`
+	PricingSyncProxy           PricingSyncProxyConfig      `json:"pricing_sync_proxy"`
 	ModelRequestURL            string                      `json:"model_request_url"`
 	ModelRequestExtraEndpoints []ModelRequestExtraEndpoint `json:"model_request_extra_endpoints"`
 	CPAMCURL                   string                      `json:"cpamc_url"`
@@ -608,7 +608,7 @@ func defaultConfig() (AppConfig, error) {
 			AutoStartDaemon:                   false,
 		},
 		CodexKeeperPriorityRule: clonePriorityRules(defaultKeeperPriorityRules),
-		LiteLLMProxy: LiteLLMProxyConfig{
+		PricingSyncProxy: PricingSyncProxyConfig{
 			Enabled:  false,
 			ProxyURL: "",
 		},
@@ -695,7 +695,8 @@ func (a *App) loadConfig(ctx context.Context) (AppConfig, error) {
 	if strings.TrimSpace(sessionSecret) != "" {
 		cfg.SessionSecret = sessionSecret
 	}
-	cfg.LiteLLMProxy = LiteLLMProxyConfig{
+	// Reuse the historical columns so switching catalogs retains configured proxies.
+	cfg.PricingSyncProxy = PricingSyncProxyConfig{
 		Enabled:  litellmProxyEnabled,
 		ProxyURL: strings.TrimSpace(litellmProxyURL),
 	}
@@ -809,7 +810,7 @@ func (a *App) saveConfig(ctx context.Context, cfg AppConfig) error {
 		    new_user_quota_unlimited = ?, new_user_quota_daily_usd = ?, new_user_quota_weekly_usd = ?,
 		    new_user_quota_monthly_usd = 0, new_user_quota_lifetime_usd = 0, session_secret = ?, updated_at = ?
 		WHERE id = 1
-	`, cfg.Collector.Enabled, strings.TrimRight(strings.TrimSpace(cfg.Collector.CLIProxyURL), "/"), strings.TrimSpace(cfg.Collector.ManagementKey), strings.TrimSpace(cfg.Collector.QueueName), cfg.Collector.BatchSize, cfg.Collector.PollIntervalSeconds, cfg.Collector.RetryIntervalSeconds, string(keeperBytes), string(rulesBytes), cfg.LiteLLMProxy.Enabled, strings.TrimSpace(cfg.LiteLLMProxy.ProxyURL), strings.TrimRight(strings.TrimSpace(cfg.ModelRequestURL), "/"), string(extraEndpointBytes), strings.TrimSpace(cfg.CPAMCURL), nonBlank(strings.TrimSpace(cfg.BrandNameZH), defaultBrandNameZH), nonBlank(strings.TrimSpace(cfg.BrandNameEN), defaultBrandNameEN), nonBlank(strings.TrimSpace(cfg.BrandSubtitleZH), defaultBrandSubtitleZH), nonBlank(strings.TrimSpace(cfg.BrandSubtitleEN), defaultBrandSubtitleEN), cfg.AllowUserAccountStatus, cfg.AllowUserUsageHistory, cfg.UsageDetailRetentionDays, cfg.CAS.Enabled, cfg.CAS.DefaultLogin, strings.TrimSpace(cfg.CAS.BaseURL), strings.TrimSpace(cfg.CAS.ValidationURL), strings.TrimSpace(cfg.CAS.ValidationHost), strings.TrimSpace(cfg.CAS.PublicURL), cfg.CAS.AutoCreateUsers, string(oidcBytes), defaultSSOLogin(cfg), cfg.NewUserQuota.Unlimited, cfg.NewUserQuota.DailyUSD, cfg.NewUserQuota.WeeklyUSD, cfg.SessionSecret, dbTime(time.Now()))
+	`, cfg.Collector.Enabled, strings.TrimRight(strings.TrimSpace(cfg.Collector.CLIProxyURL), "/"), strings.TrimSpace(cfg.Collector.ManagementKey), strings.TrimSpace(cfg.Collector.QueueName), cfg.Collector.BatchSize, cfg.Collector.PollIntervalSeconds, cfg.Collector.RetryIntervalSeconds, string(keeperBytes), string(rulesBytes), cfg.PricingSyncProxy.Enabled, strings.TrimSpace(cfg.PricingSyncProxy.ProxyURL), strings.TrimRight(strings.TrimSpace(cfg.ModelRequestURL), "/"), string(extraEndpointBytes), strings.TrimSpace(cfg.CPAMCURL), nonBlank(strings.TrimSpace(cfg.BrandNameZH), defaultBrandNameZH), nonBlank(strings.TrimSpace(cfg.BrandNameEN), defaultBrandNameEN), nonBlank(strings.TrimSpace(cfg.BrandSubtitleZH), defaultBrandSubtitleZH), nonBlank(strings.TrimSpace(cfg.BrandSubtitleEN), defaultBrandSubtitleEN), cfg.AllowUserAccountStatus, cfg.AllowUserUsageHistory, cfg.UsageDetailRetentionDays, cfg.CAS.Enabled, cfg.CAS.DefaultLogin, strings.TrimSpace(cfg.CAS.BaseURL), strings.TrimSpace(cfg.CAS.ValidationURL), strings.TrimSpace(cfg.CAS.ValidationHost), strings.TrimSpace(cfg.CAS.PublicURL), cfg.CAS.AutoCreateUsers, string(oidcBytes), defaultSSOLogin(cfg), cfg.NewUserQuota.Unlimited, cfg.NewUserQuota.DailyUSD, cfg.NewUserQuota.WeeklyUSD, cfg.SessionSecret, dbTime(time.Now()))
 	return err
 }
 

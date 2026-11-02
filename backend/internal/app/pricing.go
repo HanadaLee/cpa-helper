@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -16,7 +17,7 @@ import (
 	"cpa-helper/backend/internal/platform/database"
 )
 
-const defaultLiteLLMPricingURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+const defaultModelsDevPricingURL = "https://models.dev/api.json"
 const modelBillingUnitToken = "token"
 const modelBillingUnitRequest = "request"
 
@@ -90,7 +91,7 @@ type modelPriceSyncRequest struct {
 	SourceURL *string `json:"source_url"`
 }
 
-type liteLLMProxySettingsPayload struct {
+type pricingSyncProxySettingsPayload struct {
 	Enabled  *bool   `json:"enabled"`
 	ProxyURL *string `json:"proxy_url"`
 }
@@ -136,8 +137,8 @@ func (a *App) handleModelPrices(w http.ResponseWriter, r *http.Request) error {
 		writeJSON(w, http.StatusOK, prices)
 		return nil
 	case http.MethodPost:
-		if strings.HasSuffix(r.URL.Path, "/sync/litellm") {
-			return a.handleSyncLiteLLMPrices(w, r)
+		if strings.HasSuffix(r.URL.Path, "/sync/models-dev") {
+			return a.handleSyncModelsDevPrices(w, r)
 		}
 		var payload modelPricePayload
 		if err := decodeJSON(r, &payload); err != nil {
@@ -156,20 +157,20 @@ func (a *App) handleModelPrices(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) handleModelPriceByPath(w http.ResponseWriter, r *http.Request) error {
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/model-prices/"), "/")
-	if path == "sync/litellm" {
+	if path == "sync/models-dev" {
 		if _, err := a.adminUser(r.Context(), r); err != nil {
 			return err
 		}
 		if err := requireMethod(r, http.MethodPost); err != nil {
 			return err
 		}
-		return a.handleSyncLiteLLMPrices(w, r)
+		return a.handleSyncModelsDevPrices(w, r)
 	}
-	if path == "litellm-proxy" {
+	if path == "sync-proxy" {
 		if _, err := a.adminUser(r.Context(), r); err != nil {
 			return err
 		}
-		return a.handleLiteLLMProxySettings(w, r)
+		return a.handlePricingSyncProxySettings(w, r)
 	}
 	if path == "holiday-calendar" {
 		if _, err := a.adminUser(r.Context(), r); err != nil {
@@ -234,17 +235,17 @@ func (a *App) handleModelPriceByPath(w http.ResponseWriter, r *http.Request) err
 	}
 }
 
-func (a *App) handleLiteLLMProxySettings(w http.ResponseWriter, r *http.Request) error {
+func (a *App) handlePricingSyncProxySettings(w http.ResponseWriter, r *http.Request) error {
 	switch r.Method {
 	case http.MethodGet:
 		cfg, err := a.loadConfig(r.Context())
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, liteLLMProxySettingsResponse(cfg.LiteLLMProxy))
+		writeJSON(w, http.StatusOK, pricingSyncProxySettingsResponse(cfg.PricingSyncProxy))
 		return nil
 	case http.MethodPut:
-		var payload liteLLMProxySettingsPayload
+		var payload pricingSyncProxySettingsPayload
 		if err := decodeJSON(r, &payload); err != nil {
 			return err
 		}
@@ -252,29 +253,29 @@ func (a *App) handleLiteLLMProxySettings(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return err
 		}
-		next := cfg.LiteLLMProxy
+		next := cfg.PricingSyncProxy
 		if payload.Enabled != nil {
 			next.Enabled = *payload.Enabled
 		}
 		if payload.ProxyURL != nil {
 			next.ProxyURL = strings.TrimSpace(*payload.ProxyURL)
 		}
-		normalized, err := normalizeLiteLLMProxyConfig(next)
+		normalized, err := normalizePricingSyncProxyConfig(next)
 		if err != nil {
 			return err
 		}
-		cfg.LiteLLMProxy = normalized
+		cfg.PricingSyncProxy = normalized
 		if err := a.saveConfig(r.Context(), cfg); err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, liteLLMProxySettingsResponse(cfg.LiteLLMProxy))
+		writeJSON(w, http.StatusOK, pricingSyncProxySettingsResponse(cfg.PricingSyncProxy))
 		return nil
 	default:
 		return methodNotAllowed()
 	}
 }
 
-func liteLLMProxySettingsResponse(cfg LiteLLMProxyConfig) map[string]any {
+func pricingSyncProxySettingsResponse(cfg PricingSyncProxyConfig) map[string]any {
 	return map[string]any{
 		"enabled":   cfg.Enabled,
 		"proxy_url": cfg.ProxyURL,
@@ -752,7 +753,7 @@ func (a *App) getPrice(ctx context.Context, id int) (ModelPrice, error) {
 	return prices[0], nil
 }
 
-func (a *App) handleSyncLiteLLMPrices(w http.ResponseWriter, r *http.Request) error {
+func (a *App) handleSyncModelsDevPrices(w http.ResponseWriter, r *http.Request) error {
 	body := readAllAndRestore(r)
 	var payload modelPriceSyncRequest
 	if len(strings.TrimSpace(string(body))) > 0 {
@@ -760,7 +761,7 @@ func (a *App) handleSyncLiteLLMPrices(w http.ResponseWriter, r *http.Request) er
 			return err
 		}
 	}
-	sourceURL := defaultLiteLLMPricingURL
+	sourceURL := defaultModelsDevPricingURL
 	if payload.SourceURL != nil && strings.TrimSpace(*payload.SourceURL) != "" {
 		sourceURL = strings.TrimSpace(*payload.SourceURL)
 	}
@@ -771,22 +772,37 @@ func (a *App) handleSyncLiteLLMPrices(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return err
 	}
-	client, err := liteLLMHTTPClient(30*time.Second, cfg.LiteLLMProxy)
+	client, err := pricingSyncHTTPClient(30*time.Second, cfg.PricingSyncProxy)
 	if err != nil {
 		return err
 	}
-	response, rawPayload, err := doJSON(r.Context(), client, http.MethodGet, sourceURL, nil, nil)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, sourceURL, nil)
 	if err != nil {
-		return validationError("下载 LiteLLM 价格数据失败")
+		return validationError("下载 models.dev 价格数据失败")
 	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "CPA-Helper/models.dev-pricing-sync")
+	response, err := client.Do(req)
+	if err != nil {
+		return validationError("下载 models.dev 价格数据失败")
+	}
+	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return validationError(fmt.Sprintf("下载 LiteLLM 价格数据失败：HTTP %d", response.StatusCode))
+		return validationError(fmt.Sprintf("下载 models.dev 价格数据失败：HTTP %d", response.StatusCode))
+	}
+	const maxCatalogSize = 32 << 20
+	rawPayload, err := io.ReadAll(io.LimitReader(response.Body, maxCatalogSize+1))
+	if err != nil {
+		return validationError("下载 models.dev 价格数据失败")
+	}
+	if len(rawPayload) > maxCatalogSize {
+		return validationError("models.dev 价格数据过大")
 	}
 	var rawData map[string]any
 	if err := json.Unmarshal(rawPayload, &rawData); err != nil {
-		return validationError("LiteLLM 价格数据不是有效 JSON")
+		return validationError("models.dev 价格数据不是有效 JSON")
 	}
-	result, err := a.syncLiteLLMPrices(r.Context(), sourceURL, rawData)
+	result, err := a.syncModelsDevPrices(r.Context(), sourceURL, rawData)
 	if err != nil {
 		return err
 	}
@@ -794,25 +810,11 @@ func (a *App) handleSyncLiteLLMPrices(w http.ResponseWriter, r *http.Request) er
 	return nil
 }
 
-func (a *App) syncLiteLLMPrices(ctx context.Context, sourceURL string, rawData map[string]any) (map[string]any, error) {
+func (a *App) syncModelsDevPrices(ctx context.Context, sourceURL string, rawData map[string]any) (map[string]any, error) {
 	now := dbTime(time.Now())
-	type litellmPriceRow struct {
-		modelName string
-		payload   modelPricePayload
-	}
-	rows := make([]litellmPriceRow, 0, len(rawData))
-	skippedInvalid := 0
-	for modelName, rawEntry := range rawData {
-		if modelName == "sample_spec" {
-			skippedInvalid++
-			continue
-		}
-		payload, ok := litellmEntryToPrice(modelName, rawEntry)
-		if !ok {
-			skippedInvalid++
-			continue
-		}
-		rows = append(rows, litellmPriceRow{modelName: modelName, payload: payload})
+	rows, totalEntries, skippedInvalid, skippedDuplicates := modelsDevPriceRows(rawData)
+	if len(rows) == 0 {
+		return nil, validationError("models.dev 未返回可用价格，现有价格未修改")
 	}
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -824,21 +826,52 @@ func (a *App) syncLiteLLMPrices(ctx context.Context, sourceURL string, rawData m
 			_ = tx.Rollback()
 		}
 	}()
-	preservedBySourceModel, preservedByPriceKey, err := loadLiteLLMLocalOverrides(ctx, tx)
+	preservedByModel, preservedByPriceKey, err := loadSyncedLocalOverrides(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM model_prices WHERE source = 'litellm'`); err != nil {
+	manualRows, err := tx.QueryContext(ctx, `SELECT model FROM model_prices WHERE source NOT IN ('litellm', 'models.dev')`)
+	if err != nil {
+		return nil, err
+	}
+	manualModels := map[string]bool{}
+	for manualRows.Next() {
+		var model string
+		if err := manualRows.Scan(&model); err != nil {
+			manualRows.Close()
+			return nil, err
+		}
+		manualModels[strings.ToLower(strings.TrimSpace(model))] = true
+	}
+	err = manualRows.Err()
+	manualRows.Close()
+	if err != nil {
 		return nil, err
 	}
 	inserted, skippedManual := 0, 0
 	for _, row := range rows {
 		payload := row.payload
+		modelKey := strings.ToLower(strings.TrimSpace(payload.Model))
+		if manualModels[modelKey] {
+			skippedManual++
+			continue
+		}
 		overrides := defaultModelPriceLocalOverrides()
-		if preserved, ok := preservedBySourceModel[row.modelName]; ok {
+		overrides.LongContextEnabled = payload.LongContextEnabled
+		overrides.LongContextThresholdTokens = payload.LongContextThresholdTokens
+		overrides.LongContextInputUSDPerMillion = payload.LongContextInputUSDPerMillion
+		overrides.LongContextOutputUSDPerMillion = payload.LongContextOutputUSDPerMillion
+		overrides.LongContextCacheReadUSDPerMillion = payload.LongContextCacheReadUSDPerMillion
+		overrides.LongContextCacheCreationUSDPerMillion = payload.LongContextCacheCreationUSDPerMillion
+		if preserved, ok := preservedByPriceKey[priceKey(payload.Provider, payload.Model)]; ok {
 			overrides = preserved
-		} else if preserved, ok := preservedByPriceKey[priceKey(payload.Provider, payload.Model)]; ok {
+		} else if preserved, ok := preservedByModel[modelKey]; ok {
 			overrides = preserved
+		}
+		// Keep prices not covered by the new catalog, including legacy imports.
+		// Only a successfully parsed replacement may remove a synced price.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM model_prices WHERE source IN ('litellm', 'models.dev') AND lower(trim(model)) = ?`, modelKey); err != nil {
+			return nil, err
 		}
 		result, err := tx.ExecContext(ctx, `
 			INSERT INTO model_prices (
@@ -853,8 +886,8 @@ func (a *App) syncLiteLLMPrices(ctx context.Context, sourceURL string, rawData m
 				long_context_peak_input_usd_per_million, long_context_peak_output_usd_per_million,
 				long_context_peak_cache_read_usd_per_million, long_context_peak_cache_creation_usd_per_million,
 				source, source_model, auto_synced, last_synced_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'litellm', ?, 1, ?, ?) ON CONFLICT DO NOTHING
-		`, payload.Provider, payload.Model, payload.InputUSDPerMillion, payload.OutputUSDPerMillion, payload.CacheReadUSDPerMillion, payload.CacheCreationUSDPerMillion, nullableFloatArg(payload.RequestUSD), overrides.FastEnabled, overrides.FastMultiplier, overrides.LongContextEnabled, overrides.LongContextThresholdTokens, overrides.LongContextInputUSDPerMillion, overrides.LongContextOutputUSDPerMillion, overrides.LongContextCacheReadUSDPerMillion, overrides.LongContextCacheCreationUSDPerMillion, overrides.LongContextFastUnsupported, overrides.OffPeakEnabled, overrides.PeakInputUSDPerMillion, overrides.PeakOutputUSDPerMillion, overrides.PeakCacheReadUSDPerMillion, overrides.PeakCacheCreationUSDPerMillion, nullableFloatArg(overrides.PeakRequestUSD), overrides.LongContextPeakInputUSDPerMillion, overrides.LongContextPeakOutputUSDPerMillion, overrides.LongContextPeakCacheReadUSDPerMillion, overrides.LongContextPeakCacheCreationUSDPerMillion, row.modelName, now, now)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'models.dev', ?, 1, ?, ?) ON CONFLICT DO NOTHING
+		`, payload.Provider, payload.Model, payload.InputUSDPerMillion, payload.OutputUSDPerMillion, payload.CacheReadUSDPerMillion, payload.CacheCreationUSDPerMillion, nullableFloatArg(payload.RequestUSD), overrides.FastEnabled, overrides.FastMultiplier, overrides.LongContextEnabled, overrides.LongContextThresholdTokens, overrides.LongContextInputUSDPerMillion, overrides.LongContextOutputUSDPerMillion, overrides.LongContextCacheReadUSDPerMillion, overrides.LongContextCacheCreationUSDPerMillion, overrides.LongContextFastUnsupported, overrides.OffPeakEnabled, overrides.PeakInputUSDPerMillion, overrides.PeakOutputUSDPerMillion, overrides.PeakCacheReadUSDPerMillion, overrides.PeakCacheCreationUSDPerMillion, nullableFloatArg(overrides.PeakRequestUSD), overrides.LongContextPeakInputUSDPerMillion, overrides.LongContextPeakOutputUSDPerMillion, overrides.LongContextPeakCacheReadUSDPerMillion, overrides.LongContextPeakCacheCreationUSDPerMillion, row.sourceModel, now, now)
 		if err != nil {
 			return nil, err
 		}
@@ -871,14 +904,15 @@ func (a *App) syncLiteLLMPrices(ctx context.Context, sourceURL string, rawData m
 	committed = true
 	a.invalidateUsagePrices()
 	return map[string]any{
-		"source_url":      sourceURL,
-		"total_entries":   len(rawData),
-		"imported":        inserted,
-		"created":         inserted,
-		"updated":         0,
-		"unchanged":       0,
-		"skipped_manual":  skippedManual,
-		"skipped_invalid": skippedInvalid,
+		"source_url":         sourceURL,
+		"total_entries":      totalEntries,
+		"imported":           inserted,
+		"created":            inserted,
+		"updated":            0,
+		"unchanged":          0,
+		"skipped_manual":     skippedManual,
+		"skipped_invalid":    skippedInvalid,
+		"skipped_duplicates": skippedDuplicates,
 	}, nil
 }
 
@@ -908,9 +942,9 @@ func defaultModelPriceLocalOverrides() modelPriceLocalOverrides {
 	return modelPriceLocalOverrides{FastMultiplier: 1}
 }
 
-func loadLiteLLMLocalOverrides(ctx context.Context, tx *database.Tx) (map[string]modelPriceLocalOverrides, map[[2]string]modelPriceLocalOverrides, error) {
+func loadSyncedLocalOverrides(ctx context.Context, tx *database.Tx) (map[string]modelPriceLocalOverrides, map[[2]string]modelPriceLocalOverrides, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT provider, model, source_model, fast_enabled, fast_multiplier,
+		SELECT provider, model, fast_enabled, fast_multiplier,
 		       long_context_enabled, long_context_threshold_tokens,
 		       long_context_input_usd_per_million, long_context_output_usd_per_million,
 		       long_context_cache_read_usd_per_million, long_context_cache_creation_usd_per_million,
@@ -920,67 +954,33 @@ func loadLiteLLMLocalOverrides(ctx context.Context, tx *database.Tx) (map[string
 		       long_context_peak_input_usd_per_million, long_context_peak_output_usd_per_million,
 		       long_context_peak_cache_read_usd_per_million, long_context_peak_cache_creation_usd_per_million
 		FROM model_prices
-		WHERE source = 'litellm'
+		WHERE source IN ('litellm', 'models.dev')
+		ORDER BY updated_at, id
 	`)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
-	bySourceModel := map[string]modelPriceLocalOverrides{}
+	byModel := map[string]modelPriceLocalOverrides{}
 	byPriceKey := map[[2]string]modelPriceLocalOverrides{}
 	for rows.Next() {
 		var provider, model string
-		var sourceModel sql.NullString
 		overrides := defaultModelPriceLocalOverrides()
 		var peakRequestUSD sql.NullFloat64
-		if err := rows.Scan(&provider, &model, &sourceModel, &overrides.FastEnabled, &overrides.FastMultiplier, &overrides.LongContextEnabled, &overrides.LongContextThresholdTokens, &overrides.LongContextInputUSDPerMillion, &overrides.LongContextOutputUSDPerMillion, &overrides.LongContextCacheReadUSDPerMillion, &overrides.LongContextCacheCreationUSDPerMillion, &overrides.LongContextFastUnsupported, &overrides.OffPeakEnabled, &overrides.PeakInputUSDPerMillion, &overrides.PeakOutputUSDPerMillion, &overrides.PeakCacheReadUSDPerMillion, &overrides.PeakCacheCreationUSDPerMillion, &peakRequestUSD, &overrides.LongContextPeakInputUSDPerMillion, &overrides.LongContextPeakOutputUSDPerMillion, &overrides.LongContextPeakCacheReadUSDPerMillion, &overrides.LongContextPeakCacheCreationUSDPerMillion); err != nil {
+		if err := rows.Scan(&provider, &model, &overrides.FastEnabled, &overrides.FastMultiplier, &overrides.LongContextEnabled, &overrides.LongContextThresholdTokens, &overrides.LongContextInputUSDPerMillion, &overrides.LongContextOutputUSDPerMillion, &overrides.LongContextCacheReadUSDPerMillion, &overrides.LongContextCacheCreationUSDPerMillion, &overrides.LongContextFastUnsupported, &overrides.OffPeakEnabled, &overrides.PeakInputUSDPerMillion, &overrides.PeakOutputUSDPerMillion, &overrides.PeakCacheReadUSDPerMillion, &overrides.PeakCacheCreationUSDPerMillion, &peakRequestUSD, &overrides.LongContextPeakInputUSDPerMillion, &overrides.LongContextPeakOutputUSDPerMillion, &overrides.LongContextPeakCacheReadUSDPerMillion, &overrides.LongContextPeakCacheCreationUSDPerMillion); err != nil {
 			return nil, nil, err
 		}
 		if peakRequestUSD.Valid {
 			overrides.PeakRequestUSD = &peakRequestUSD.Float64
 		}
 		overrides.FastMultiplier = normalizedFastMultiplier(overrides.FastMultiplier)
-		if sourceModel.Valid && strings.TrimSpace(sourceModel.String) != "" {
-			bySourceModel[sourceModel.String] = overrides
-		}
+		byModel[strings.ToLower(strings.TrimSpace(model))] = overrides
 		byPriceKey[priceKey(provider, model)] = overrides
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
-	return bySourceModel, byPriceKey, nil
-}
-
-func litellmEntryToPrice(modelName string, rawEntry any) (modelPricePayload, bool) {
-	entry, ok := rawEntry.(map[string]any)
-	if !ok {
-		return modelPricePayload{}, false
-	}
-	provider := strings.ToLower(strings.TrimSpace(fmt.Sprint(entry["litellm_provider"])))
-	model := strings.TrimSpace(modelName)
-	if provider == "" || model == "" || len(provider) > 120 || len(model) > 180 {
-		return modelPricePayload{}, false
-	}
-	payload := modelPricePayload{
-		Provider:                   provider,
-		Model:                      model,
-		InputUSDPerMillion:         usdPerMillion(entry["input_cost_per_token"]),
-		OutputUSDPerMillion:        usdPerMillion(entry["output_cost_per_token"]),
-		CacheReadUSDPerMillion:     usdPerMillion(entry["cache_read_input_token_cost"]),
-		CacheCreationUSDPerMillion: usdPerMillion(entry["cache_creation_input_token_cost"]),
-	}
-	if payload.InputUSDPerMillion == 0 && payload.OutputUSDPerMillion == 0 && payload.CacheReadUSDPerMillion == 0 && payload.CacheCreationUSDPerMillion == 0 {
-		return modelPricePayload{}, false
-	}
-	return payload, true
-}
-
-func usdPerMillion(value any) float64 {
-	number, ok := numeric(value)
-	if !ok || number < 0 {
-		return 0
-	}
-	return mathRound(number*1_000_000, 12)
+	return byModel, byPriceKey, nil
 }
 
 func numeric(value any) (float64, bool) {
@@ -1188,12 +1188,12 @@ func normalizedFastMultiplier(value float64) float64 {
 	return value
 }
 
-func liteLLMHTTPClient(timeout time.Duration, proxyCfg LiteLLMProxyConfig) (*http.Client, error) {
+func pricingSyncHTTPClient(timeout time.Duration, proxyCfg PricingSyncProxyConfig) (*http.Client, error) {
 	client := httpClient(timeout)
 	if !proxyCfg.Enabled {
 		return client, nil
 	}
-	normalized, err := normalizeLiteLLMProxyConfig(proxyCfg)
+	normalized, err := normalizePricingSyncProxyConfig(proxyCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -1211,18 +1211,18 @@ func liteLLMHTTPClient(timeout time.Duration, proxyCfg LiteLLMProxyConfig) (*htt
 	return client, nil
 }
 
-func normalizeLiteLLMProxyConfig(input LiteLLMProxyConfig) (LiteLLMProxyConfig, error) {
-	proxyURL, err := normalizeLiteLLMProxyURL(input.ProxyURL)
+func normalizePricingSyncProxyConfig(input PricingSyncProxyConfig) (PricingSyncProxyConfig, error) {
+	proxyURL, err := normalizePricingSyncProxyURL(input.ProxyURL)
 	if err != nil {
-		return LiteLLMProxyConfig{}, err
+		return PricingSyncProxyConfig{}, err
 	}
 	if input.Enabled && proxyURL == "" {
-		return LiteLLMProxyConfig{}, validationError("启用代理时必须填写代理地址")
+		return PricingSyncProxyConfig{}, validationError("启用代理时必须填写代理地址")
 	}
-	return LiteLLMProxyConfig{Enabled: input.Enabled, ProxyURL: proxyURL}, nil
+	return PricingSyncProxyConfig{Enabled: input.Enabled, ProxyURL: proxyURL}, nil
 }
 
-func normalizeLiteLLMProxyURL(value string) (string, error) {
+func normalizePricingSyncProxyURL(value string) (string, error) {
 	text := strings.TrimSpace(value)
 	if text == "" {
 		return "", nil

@@ -630,7 +630,7 @@ export interface ModelPrice {
   long_context_peak_cache_read_usd_per_million: number
   long_context_peak_cache_creation_usd_per_million: number
   billing_unit: 'token' | 'request' | string
-  source: 'manual' | 'litellm' | string
+  source: 'manual' | 'models.dev' | string
   source_model: string | null
   auto_synced: boolean
   last_synced_at: string | null
@@ -686,6 +686,7 @@ export interface ModelPriceSyncResponse {
   unchanged: number
   skipped_manual: number
   skipped_invalid: number
+  skipped_duplicates: number
 }
 
 export interface ModelPriceCatalogItem {
@@ -710,12 +711,12 @@ export interface ModelPriceCatalogResponse {
   unpriced_models: number
 }
 
-export interface LiteLLMProxySettings {
+export interface PricingSyncProxySettings {
   enabled: boolean
   proxy_url: string
 }
 
-export interface LiteLLMProxySettingsPayload {
+export interface PricingSyncProxySettingsPayload {
   enabled: boolean
   proxy_url: string
 }

@@ -295,7 +295,7 @@ func (a *App) Routes() http.Handler {
 
 	mux.HandleFunc("/api/auth/", a.wrap(a.handleAuth))
 	mux.HandleFunc("/cas/", a.wrap(a.handleCAS))
-	mux.HandleFunc("/oidc/", a.wrap(a.handleOIDC))
+	mux.HandleFunc("/oidc/", a.wrap(a.handleOIDCBrowser))
 	mux.HandleFunc("/api/branding", a.wrap(a.handleBranding))
 	mux.HandleFunc("/api/settings", a.wrap(a.handleSettings))
 	mux.HandleFunc("/api/tutorials", a.wrap(a.handleTutorials))

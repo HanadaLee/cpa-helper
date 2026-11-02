@@ -11,6 +11,8 @@ async function admin(page: Page) {
 async function provider(username: string) {
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
   const codes = new Map<string, { nonce: string, challenge: string }>()
+  const authorizationPrompts: string[] = []
+  let silentError = ''
   let origin = ''
   const server: Server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', origin)
@@ -24,6 +26,14 @@ async function provider(username: string) {
     }
     if (url.pathname === '/keys') return json({ keys: [{ ...publicKey.export({ format: 'jwk' }), kid: 'test', alg: 'RS256', use: 'sig' }] })
     if (url.pathname === '/authorize') {
+      authorizationPrompts.push(url.searchParams.get('prompt') ?? '')
+      if (url.searchParams.get('prompt') === 'none' && silentError) {
+        const callback = new URL(url.searchParams.get('redirect_uri')!)
+        callback.searchParams.set('state', url.searchParams.get('state')!)
+        callback.searchParams.set('error', silentError)
+        response.writeHead(302, { Location: callback.toString() }).end()
+        return
+      }
       const code = randomUUID()
       codes.set(code, { nonce: url.searchParams.get('nonce') ?? '', challenge: url.searchParams.get('code_challenge') ?? '' })
       const callback = new URL(url.searchParams.get('redirect_uri')!)
@@ -64,7 +74,8 @@ async function provider(username: string) {
   const address = server.address()
   if (!address || typeof address === 'string') throw new Error('No provider address')
   origin = 'http://127.0.0.1:' + address.port
-  return { origin, close: () => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())) }
+  return { origin, authorizationPrompts, setSilentError: (error: string) => { silentError = error },
+    close: () => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())) }
 }
 
 test('OIDC sign-in, forced redirect, local bypass, profile and logout work in the browser', async ({ page, baseURL }) => {
@@ -112,6 +123,62 @@ test('OIDC sign-in, forced redirect, local bypass, profile and logout work in th
     await page.goto(logout.logout_url)
     await expect(page).toHaveURL(/\/login\?skipsso=true$/)
     await expect(page.getByLabel('账号', { exact: true })).toBeVisible()
+  } finally {
+    await admin(page)
+    expect((await page.request.put('/api/settings', { data: {
+      ...original, sso_default_login: original.sso_default_login || '', oidc_enabled: false, oidc_client_secret: '',
+    } })).ok()).toBeTruthy()
+    await identityProvider.close()
+  }
+})
+
+test('stale OIDC callbacks recover silently or show a reason before returning to login after three seconds', async ({ page, baseURL }) => {
+  await admin(page)
+  const original = await (await page.request.get('/api/settings')).json()
+  const identityProvider = await provider('oidc-recovery-' + Date.now())
+  try {
+    expect((await page.request.put('/api/settings', { data: {
+      sso_default_login: 'oidc', oidc_enabled: true, oidc_issuer: identityProvider.origin,
+      oidc_client_id: 'helper-e2e', oidc_client_secret: 'fake-secret', oidc_public_url: baseURL,
+      oidc_username_claim: 'preferred_username', oidc_auto_create_users: true,
+    } })).ok()).toBeTruthy()
+    await page.context().clearCookies()
+    const navigations: { url: string, time: number }[] = []
+    page.on('request', request => {
+      if (request.isNavigationRequest()) navigations.push({ url: request.url(), time: Date.now() })
+    })
+    await page.goto('/oidc/callback?state=expired&code=expired-code')
+    await expect(page).toHaveURL(/\/account\/usage$/)
+    expect(identityProvider.authorizationPrompts).toEqual(['none'])
+    expect(navigations.some(({ url }) => new URL(url).pathname === '/login')).toBe(false)
+    expect((await page.request.get('/api/auth/me')).ok()).toBeTruthy()
+
+    await page.goto('/oidc/callback?state=expired&code=expired-code')
+    await expect(page).toHaveURL(/\/account\/usage$/)
+    expect(identityProvider.authorizationPrompts).toEqual(['none'])
+
+    identityProvider.setSilentError('login_required')
+    await page.context().clearCookies()
+    const response = await page.goto('/oidc/callback?state=expired&code=expired-code')
+    expect(response?.status()).toBe(401)
+    const shownAt = Date.now()
+    await expect(page.getByRole('alert')).toHaveText('身份服务登录会话已过期，需要重新登录')
+    await expect(page.getByText('3 秒后自动跳转到登录页面')).toBeVisible()
+    await expect(page.getByRole('link', { name: '立即前往登录' })).toHaveAttribute('href', '/login?skipsso=true')
+    await page.screenshot({ path: 'test-results/oidc-recovery-error.png' })
+    await expect(page).toHaveURL(/\/login\?skipsso=true$/, { timeout: 7000 })
+    const loginNavigation = navigations.find(({ url }) => new URL(url).pathname === '/login')
+    expect(loginNavigation).toBeDefined()
+    expect(loginNavigation!.time - shownAt).toBeGreaterThanOrEqual(2700)
+    await expect(page.getByLabel('账号', { exact: true })).toBeVisible()
+    expect(identityProvider.authorizationPrompts).toEqual(['none', 'none'])
+
+    // Expired logout callbacks must not silently sign the user back in.
+    await page.goto('/oidc/logged-out?state=expired')
+    await expect(page.getByRole('alert')).toHaveText('OIDC 登录状态无效或已过期，请重新登录')
+    await page.getByRole('link', { name: '立即前往登录' }).click()
+    await expect(page).toHaveURL(/\/login\?skipsso=true$/)
+    expect(identityProvider.authorizationPrompts).toEqual(['none', 'none'])
   } finally {
     await admin(page)
     expect((await page.request.put('/api/settings', { data: {

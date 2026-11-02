@@ -222,9 +222,7 @@ func TestOIDCSharedCASIdentityAndLogout(t *testing.T) {
 	if users != 1 || cards != 1 || keys != 1 || dailyUsed != 3 {
 		t.Fatalf("shared data lost: %d %d %d %v", users, cards, keys, dailyUsed)
 	}
-	if retry := oidcTestCallback(t, a, target, flowCookies); retry.Code != 401 {
-		t.Fatalf("replay accepted: %d", retry.Code)
-	}
+	oidcTestSilentRestart(t, p, oidcTestCallback(t, a, target, flowCookies))
 
 	// A renamed OIDC claim cannot change the stable identity or steal another user.
 	p.mu.Lock()
@@ -356,6 +354,10 @@ func TestOIDCRejectsInvalidIdentityAndState(t *testing.T) {
 				}
 			}
 			rec := oidcTestCallback(t, a, target, cookies)
+			if mode == "state" || mode == "cookie" || mode == "expired-state" {
+				oidcTestSilentRestart(t, p, rec)
+				return
+			}
 			want := http.StatusUnauthorized
 			if mode == "local-collision" || mode == "bound-collision" {
 				want = http.StatusConflict
@@ -366,6 +368,7 @@ func TestOIDCRejectsInvalidIdentityAndState(t *testing.T) {
 			if rec.Code != want {
 				t.Fatalf("invalid %s accepted: %d %s", mode, rec.Code, rec.Body.String())
 			}
+			assertOIDCErrorPage(t, rec, "")
 			for _, cookie := range rec.Result().Cookies() {
 				if cookie.Name == security.SessionCookieName() && cookie.MaxAge > 0 {
 					t.Fatal("invalid callback created session")

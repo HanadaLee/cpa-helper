@@ -15,6 +15,9 @@ import (
 
 const oidcFlowTTL = 5 * time.Minute
 const oidcSessionTTL = 7 * 24 * time.Hour
+const oidcSilentStatePrefix = "silent."
+
+var errOIDCFlowInvalid = authenticationError("OIDC 登录状态无效或已过期，请重新登录")
 
 var oidcHTTPClient = &http.Client{
 	Timeout:       10 * time.Second,
@@ -86,6 +89,10 @@ func (a *App) newOIDCFlow(ctx context.Context, kind, configHash, returnTo string
 	if flow.State, err = createSecret(); err != nil {
 		return flow, err
 	}
+	if kind == "login-silent" {
+		// Keep the retry marker in state so even a browser blocking cookies cannot loop.
+		flow.State = oidcSilentStatePrefix + flow.State
+	}
 	if flow.Browser, err = createSecret(); err != nil {
 		return flow, err
 	}
@@ -121,7 +128,7 @@ func (a *App) consumeOIDCFlow(w http.ResponseWriter, r *http.Request, kind, publ
 	cookie, err := r.Cookie("cpa_oidc_" + kind)
 	state := r.URL.Query().Get("state")
 	if err != nil || cookie.Value == "" || state == "" || len(state) > 200 || len(cookie.Value) > 200 {
-		return flow, authenticationError("OIDC 登录状态无效或已过期，请重新登录")
+		return flow, errOIDCFlowInvalid
 	}
 	err = a.db.QueryRowContext(r.Context(), `DELETE FROM oidc_flows
 		WHERE state_hash = ? AND browser_hash = ? AND kind = ? AND expires_at > ?
@@ -129,7 +136,7 @@ func (a *App) consumeOIDCFlow(w http.ResponseWriter, r *http.Request, kind, publ
 		hashAPIKey(state), hashAPIKey(cookie.Value), kind, time.Now().Unix()).
 		Scan(&flow.Nonce, &flow.Verifier, &flow.ConfigHash, &flow.ReturnTo)
 	if errors.Is(err, sql.ErrNoRows) {
-		return flow, authenticationError("OIDC 登录状态无效或已过期，请重新登录")
+		return flow, errOIDCFlowInvalid
 	}
 	if err != nil {
 		return flow, err
@@ -160,17 +167,7 @@ func (a *App) handleOIDC(w http.ResponseWriter, r *http.Request) error {
 	}
 	switch r.URL.Path {
 	case "/oidc/login":
-		client, err := a.oidcRuntime(r.Context(), cfg.OIDC)
-		if err != nil {
-			return err
-		}
-		flow, err := a.newOIDCFlow(r.Context(), "login", client.key, r.URL.Query().Get("returnTo"))
-		if err != nil {
-			return err
-		}
-		setOIDCFlowCookie(w, "login", flow.Browser, cfg.OIDC.PublicURL, false)
-		http.Redirect(w, r, client.oauth.AuthCodeURL(flow.State, oidc.Nonce(flow.Nonce), oauth2.S256ChallengeOption(flow.Verifier)), http.StatusFound)
-		return nil
+		return a.startOIDCLogin(w, r, cfg, r.URL.Query().Get("returnTo"), false)
 	case "/oidc/callback":
 		return a.handleOIDCCallback(w, r, cfg)
 	default:
@@ -178,17 +175,58 @@ func (a *App) handleOIDC(w http.ResponseWriter, r *http.Request) error {
 	}
 }
 
+func (a *App) startOIDCLogin(w http.ResponseWriter, r *http.Request, cfg AppConfig, returnTo string, silent bool) error {
+	client, err := a.oidcRuntime(r.Context(), cfg.OIDC)
+	if err != nil {
+		return err
+	}
+	kind := "login"
+	if silent {
+		kind = "login-silent"
+	}
+	flow, err := a.newOIDCFlow(r.Context(), kind, client.key, returnTo)
+	if err != nil {
+		return err
+	}
+	options := []oauth2.AuthCodeOption{oidc.Nonce(flow.Nonce), oauth2.S256ChallengeOption(flow.Verifier)}
+	if silent {
+		options = append(options, oauth2.SetAuthURLParam("prompt", "none"))
+	}
+	setOIDCFlowCookie(w, kind, flow.Browser, cfg.OIDC.PublicURL, false)
+	http.Redirect(w, r, client.oauth.AuthCodeURL(flow.State, options...), http.StatusFound)
+	return nil
+}
+
 func (a *App) handleOIDCCallback(w http.ResponseWriter, r *http.Request, cfg AppConfig) error {
-	flow, err := a.consumeOIDCFlow(w, r, "login", cfg.OIDC.PublicURL)
+	kind := "login"
+	if strings.HasPrefix(r.URL.Query().Get("state"), oidcSilentStatePrefix) {
+		kind = "login-silent"
+	}
+	flow, err := a.consumeOIDCFlow(w, r, kind, cfg.OIDC.PublicURL)
+	if errors.Is(err, errOIDCFlowInvalid) {
+		// A refreshed old callback must not interrupt an already authenticated user.
+		if _, sessionErr := a.currentUser(r.Context(), r); sessionErr == nil {
+			http.Redirect(w, r, "/", http.StatusFound)
+			return nil
+		} else {
+			var appErr *AppError
+			if !errors.As(sessionErr, &appErr) || appErr.Code != "authentication_failed" {
+				return sessionErr
+			}
+		}
+		if kind == "login" {
+			// Never exchange the stale code: start one fresh state/nonce/PKCE flow instead.
+			return a.startOIDCLogin(w, r, cfg, "/", true)
+		}
+	}
 	if err != nil {
 		return err
 	}
 	if flow.ConfigHash != oidcConfigHash(cfg.OIDC) {
 		return authenticationError("OIDC 配置已变更，请重新登录")
 	}
-	if r.URL.Query().Get("error") != "" {
-		http.Redirect(w, r, "/login?skipsso=true&sso_error=oidc", http.StatusFound)
-		return nil
+	if providerError := r.URL.Query().Get("error"); providerError != "" {
+		return oidcAuthorizationError(providerError)
 	}
 	code := r.URL.Query().Get("code")
 	if code == "" || len(code) > 8192 {

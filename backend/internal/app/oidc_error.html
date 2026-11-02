@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="3;url=/login?skipsso=true">
+  <title>登录提示</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; min-height: 100svh; display: grid; place-items: center; background: light-dark(#fafafa, #09090b); color: light-dark(#18181b, #fafafa); }
+    main { box-sizing: border-box; width: min(420px, calc(100% - 32px)); padding: 28px; border: 1px solid light-dark(#e4e4e7, #27272a); border-radius: 12px; background: light-dark(#fff, #18181b); }
+    h1 { margin: 0 0 16px; font-size: 20px; }
+    p { margin: 0 0 16px; line-height: 1.6; overflow-wrap: anywhere; }
+    .hint { color: light-dark(#71717a, #a1a1aa); font-size: 14px; }
+    a { display: inline-block; padding: 10px 16px; border-radius: 8px; background: light-dark(#18181b, #fafafa); color: light-dark(#fafafa, #18181b); text-decoration: none; font-size: 14px; }
+    a:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+  </style>
+</head>
+<body>
+  <main aria-labelledby="title">
+    <h1 id="title">登录提示</h1>
+    <p role="alert">{{.}}</p>
+    <p class="hint">3 秒后自动跳转到登录页面</p>
+    <a href="/login?skipsso=true">立即前往登录</a>
+  </main>
+</body>
+</html>

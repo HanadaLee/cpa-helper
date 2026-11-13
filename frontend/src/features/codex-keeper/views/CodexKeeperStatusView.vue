@@ -73,6 +73,7 @@ import {
   Eye,
   ExternalLink,
   Gauge,
+  KeyRound,
   LogIn,
   MoreHorizontal,
   PauseCircle,
@@ -88,6 +89,9 @@ import {
 
 import {
   bulkDeleteCodexKeeperAccounts,
+  coreCredentialAction,
+  bindCredentialSIWC,
+  cancelCodexKeeperOAuth,
   consumeCodexKeeperResetCredit,
   deleteCodexKeeperAccount,
   disableCodexKeeperAccount,
@@ -241,6 +245,9 @@ const isStartingAccountInspection = ref(false)
 const authFileEditor = ref<AuthFileEditorState | null>(null)
 const oauthDialogOpen = ref(false)
 const oauthProvider = ref<CredentialOAuthProvider>('codex')
+const oauthTarget = ref<CodexKeeperAccount | null>(null)
+const oauthFlow = ref<'login' | 'siwc'>('login')
+const oauthState = ref('')
 const oauthProjectId = ref('')
 const oauthDialogStatus = ref<OAuthDialogStatus>('idle')
 const oauthAuthURL = ref('')
@@ -314,6 +321,7 @@ const oauthProviderOptions = computed<Array<{ label: string; value: CredentialOA
   { label: 'Gemini CLI', value: 'gemini-cli' },
   { label: 'Kimi', value: 'kimi' },
   { label: 'xAI', value: 'xai' },
+  { label: 'Meta', value: 'meta' },
 ])
 const oauthProviderLabel = computed(
   () => oauthProviderOptions.value.find((option) => option.value === oauthProvider.value)?.label ?? oauthProvider.value,
@@ -1203,7 +1211,9 @@ function accountStatusTags(account: CodexKeeperAccount) {
   const statusMessage = account.status_message?.trim()
   const healthyStatuses = new Set(['active', 'ok', 'ready', 'healthy', 'success', 'available'])
   const unavailableStatuses = new Set(['error', 'failed', 'unavailable'])
-  const issueTag = isTransientCredentialWarning(account)
+  const issueTag = account.requires_sign_in
+    ? { label: t('需要重新登录', 'Sign-in required'), tone: 'is-danger' }
+    : isTransientCredentialWarning(account)
     ? { label: t('状态警告', 'Status Warning'), tone: 'is-warning' }
     : account.last_status_code === 401
     ? { label: t('401报错', '401 Error'), tone: 'is-danger' }
@@ -1226,6 +1236,10 @@ function accountStatusTags(account: CodexKeeperAccount) {
       ? { label: t('运行时', 'Runtime'), tone: 'is-type' }
       : null,
     issueTag,
+    account.v8_supported && account.recovery_stage
+      ? { label: coreRecoveryStageLabel(account.recovery_stage), tone: 'is-type' }
+      : null,
+    account.use_siwc ? { label: `SIWC ${account.siwc_status ?? '-'}`, tone: account.siwc_status === 'valid' ? 'is-type' : 'is-warning' } : null,
   ].filter((item): item is { label: string; tone: string } => item !== null)
 }
 
@@ -1733,6 +1747,10 @@ async function copyAuthFileEditorText() {
 }
 
 function resetCodexOAuthDialog() {
+  if (oauthState.value && oauthTarget.value && oauthDialogStatus.value === 'waiting') {
+    void cancelCodexKeeperOAuth(oauthState.value).catch(() => undefined)
+  }
+  oauthState.value = ''
   oauthPollToken += 1
   oauthDialogStatus.value = 'idle'
   oauthAuthURL.value = ''
@@ -1755,6 +1773,8 @@ function openCodexOAuthDialog() {
     return
   }
   resetCodexOAuthDialog()
+  oauthTarget.value = null
+  oauthFlow.value = 'login'
   oauthProvider.value = 'codex'
   oauthProjectId.value = ''
   oauthDialogOpen.value = true
@@ -1773,16 +1793,7 @@ function handleCodexOAuthDialogOpen(open: boolean) {
 }
 
 async function reloadAccountsAfterOAuth() {
-  if (oauthProvider.value !== 'codex') {
-    await loadAccounts()
-    return
-  }
-  try {
-    await runCodexKeeperOnce()
-    void pollKeeperModeUntilIdle('once')
-  } catch {
-    await loadAccounts()
-  }
+  await loadAccounts()
 }
 
 async function pollCodexOAuthStatus(state: string, token: number) {
@@ -1836,11 +1847,14 @@ async function startCodexOAuth() {
   oauthError.value = ''
   isStartingOAuth.value = true
   try {
-    const response = await startCodexKeeperOAuth(oauthProvider.value, oauthProjectId.value)
+    const response = oauthFlow.value === 'siwc' && oauthTarget.value
+      ? await bindCredentialSIWC(oauthTarget.value.name)
+      : await startCodexKeeperOAuth(oauthProvider.value, oauthProjectId.value, oauthTarget.value ? { name: oauthTarget.value.name, auth_index: oauthTarget.value.auth_index } : undefined)
     if (token !== oauthPollToken || !oauthDialogOpen.value) {
       return
     }
     oauthAuthURL.value = response.url
+    oauthState.value = response.state
     oauthDialogStatus.value = 'waiting'
     void pollCodexOAuthStatus(response.state, token)
   } catch (error) {
@@ -2479,6 +2493,35 @@ function accountActionKey(account: CodexKeeperAccount, action: AccountAction): s
   return `${action}\u0000${account.name}`
 }
 
+function coreRecoveryStageLabel(stage: string): string {
+  const labels: Record<string, string> = {
+    sign_in_required: t('需要重新登录', 'Sign-in required'),
+    quota_blocked: t('配额受限', 'Quota blocked'),
+    loaded: t('已加载，待验证', 'Loaded, not verified'),
+    inference_verified: t('推理已验证', 'Inference verified'),
+    renewal_verified: t('续期已验证', 'Renewal verified'),
+    expired_sign_in_required: t('已过期，需重新登录', 'Expired, sign-in required'),
+    retry_scheduled: t('等待重试续期', 'Renewal retry scheduled'),
+    awaiting_first_renewal: t('等待首次续期', 'Awaiting first renewal'),
+  }
+  return labels[stage] ?? stage
+}
+
+function openTargetOAuth(account: CodexKeeperAccount, siwc = false) {
+  openCodexOAuthDialog()
+  oauthTarget.value = account
+  oauthFlow.value = siwc ? 'siwc' : 'login'
+  const provider = account.provider === 'claude' ? 'anthropic' : account.provider === 'gemini' ? 'gemini-cli' : account.provider
+  oauthProvider.value = provider as CredentialOAuthProvider
+}
+
+function runCoreCredentialAction(account: CodexKeeperAccount, action: 'core-refresh' | 'core-verify') {
+  const run = () => runAccountAction(account, 'refresh', () => coreCredentialAction(account.name, action), t('Core 凭证操作完成', 'Core credential operation completed'))
+  if (action === 'core-verify') {
+    openAccountConfirm(t('推理验证', 'Verify inference'), t('将使用此凭证发起一次最小真实请求，可能产生少量用量。', 'This sends a minimal real request using this credential and may incur a small usage charge.'), t('验证', 'Verify'), 'warning', run)
+  } else void run()
+}
+
 function isActionLoading(account: CodexKeeperAccount, action: AccountAction): boolean {
   return actingActions.value.has(accountActionKey(account, action))
 }
@@ -2979,6 +3022,10 @@ onBeforeUnmount(() => {
                             <span>{{ row.disabled ? t('启用', 'Enable') : t('禁用', 'Disable') }}</span>
                           </DropdownMenuItem>
                           <DropdownMenuItem v-if="isCodexCredential(row)" :disabled="isRowActing(row) || isBulkOperationRunning" @select="refreshAccount(row)"><RefreshCw /><span>{{ t('巡检', 'Inspect') }}</span></DropdownMenuItem>
+                          <DropdownMenuItem v-if="row.v8_supported" :disabled="isRowActing(row)" @select="runCoreCredentialAction(row, 'core-refresh')"><RefreshCw /><span>{{ t('Core 刷新令牌', 'Refresh token in Core') }}</span></DropdownMenuItem>
+                          <DropdownMenuItem v-if="row.v8_supported" :disabled="isRowActing(row) || row.disabled" @select="runCoreCredentialAction(row, 'core-verify')"><ShieldCheck /><span>{{ t('推理验证', 'Verify inference') }}</span></DropdownMenuItem>
+                          <DropdownMenuItem v-if="row.v8_supported && oauthProviderOptions.some(option => option.value === (row.provider === 'claude' ? 'anthropic' : row.provider === 'gemini' ? 'gemini-cli' : row.provider))" :disabled="isRowActing(row)" @select="openTargetOAuth(row)"><KeyRound /><span>{{ t('重新授权此凭证', 'Reauthorize this credential') }}</span></DropdownMenuItem>
+                          <DropdownMenuItem v-if="row.siwc_bind_supported" :disabled="isRowActing(row)" @select="openTargetOAuth(row, true)"><KeyRound /><span>{{ t('绑定 SIWC', 'Bind SIWC') }}</span></DropdownMenuItem>
                         </DropdownMenuGroup>
                         <DropdownMenuSeparator v-if="isCredentialMutable(row)" />
                         <DropdownMenuItem v-if="isCredentialMutable(row)" variant="destructive" :disabled="isRowActing(row) || isBulkOperationRunning" @select="confirmDeleteAccount(row)"><Trash2 /><span>{{ t('删除', 'Delete') }}</span></DropdownMenuItem>
@@ -3037,6 +3084,14 @@ onBeforeUnmount(() => {
             <div v-if="selectedAccount.auth_index" class="detail-row"><dt>{{ t('认证索引', 'Auth Index') }}</dt><dd>{{ selectedAccount.auth_index }}</dd></div>
             <div class="detail-row"><dt>{{ t('启用状态', 'Enabled Status') }}</dt><dd>{{ selectedAccount.disabled ? t('已禁用', 'Disabled') : t('启用中', 'Enabled') }}</dd></div>
             <div class="detail-row"><dt>{{ t('运行状态', 'Runtime Status') }}</dt><dd>{{ selectedAccount.status ?? '-' }}</dd></div>
+            <template v-if="selectedAccount.v8_supported">
+              <div class="detail-row"><dt>{{ t('恢复阶段', 'Recovery stage') }}</dt><dd>{{ coreRecoveryStageLabel(selectedAccount.recovery_stage ?? '-') }}</dd></div>
+              <div class="detail-row"><dt>{{ t('续期状态', 'Renewal state') }}</dt><dd>{{ coreRecoveryStageLabel(selectedAccount.renewal_state ?? '-') }}</dd></div>
+              <div class="detail-row"><dt>{{ t('访问令牌到期', 'Access token expires') }}</dt><dd>{{ formatDateTime(selectedAccount.access_token_expires_at ?? null) }}</dd></div>
+              <div class="detail-row"><dt>{{ t('下次刷新检查', 'Next refresh check') }}</dt><dd>{{ formatDateTime(selectedAccount.next_refresh_after ?? null) }}</dd></div>
+              <div v-if="selectedAccount.use_siwc" class="detail-row"><dt>SIWC</dt><dd>{{ selectedAccount.siwc_status ?? '-' }} · {{ formatDateTime(selectedAccount.siwc_expires_at ?? null) }}</dd></div>
+              <div v-if="selectedAccount.refresh_error?.message" class="detail-row"><dt>{{ t('续期错误', 'Renewal error') }}</dt><dd>{{ selectedAccount.refresh_error.message }}</dd></div>
+            </template>
             <div v-if="selectedAccount.success !== null" class="detail-row"><dt>{{ t('成功请求', 'Successful Requests') }}</dt><dd>{{ formatInteger(selectedAccount.success) }}</dd></div>
             <div v-if="selectedAccount.failed !== null" class="detail-row"><dt>{{ t('失败请求', 'Failed Requests') }}</dt><dd>{{ formatInteger(selectedAccount.failed) }}</dd></div>
             <div v-if="selectedAccount.weight !== null" class="detail-row"><dt>{{ t('调度权重', 'Routing Weight') }}</dt><dd>{{ selectedAccount.weight }}</dd></div>
@@ -3267,12 +3322,15 @@ onBeforeUnmount(() => {
           </DialogDescription>
         </DialogHeader>
         <div class="oauth-dialog">
+          <Alert v-if="oauthTarget">
+            <AlertDescription>{{ oauthFlow === 'siwc' ? t('为指定凭证绑定 SIWC', 'Bind SIWC to the selected credential') : t('仅重新授权指定凭证；其他账户不会被替换', 'Reauthorize only this credential; other accounts will not be replaced') }} · {{ oauthTarget.name }}</AlertDescription>
+          </Alert>
           <FieldGroup>
             <Field>
               <FieldLabel>{{ t('提供商', 'Provider') }}</FieldLabel>
               <Select
                 :model-value="oauthProvider"
-                :disabled="oauthDialogStatus === 'waiting' || isStartingOAuth"
+                :disabled="Boolean(oauthTarget) || oauthDialogStatus === 'waiting' || isStartingOAuth"
                 @update:model-value="handleOAuthProviderChange"
               >
                 <SelectTrigger class="w-full">
@@ -3316,7 +3374,7 @@ onBeforeUnmount(() => {
           >
             <Spinner v-if="isStartingOAuth" data-icon="inline-start" />
             <LogIn v-else data-icon="inline-start" />
-            {{ t(`开始 ${oauthProviderLabel} 登录`, `Start ${oauthProviderLabel} Login`) }}
+            {{ oauthFlow === 'siwc' ? t('开始 SIWC 绑定', 'Start SIWC Binding') : t(`开始 ${oauthProviderLabel} 登录`, `Start ${oauthProviderLabel} Login`) }}
           </Button>
           <div v-if="oauthAuthURL" class="oauth-dialog-section">
             <label>{{ t('授权链接', 'Authorization link') }}</label>

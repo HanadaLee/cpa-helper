@@ -85,7 +85,7 @@ func TransferSQLite(ctx context.Context, source string, verifyOnly bool, out io.
 		if objects != 0 {
 			return fmt.Errorf("target public schema is not empty; nothing was overwritten (use a new database, do not run migrate first)")
 		}
-		schema, err := migrations.PostgresFS.ReadFile(fmt.Sprintf("postgres/%d_baseline.sql", migrations.PostgreSQLBaselineVersion))
+		schema, err := migrations.PostgresFS.ReadFile(fmt.Sprintf("postgres-import/%d_baseline.sql", migrations.PostgreSQLBaselineVersion))
 		if err != nil {
 			return err
 		}
@@ -140,8 +140,27 @@ func TransferSQLite(ctx context.Context, source string, verifyOnly bool, out io.
             tstamp TIMESTAMP NOT NULL DEFAULT now())`); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, "INSERT INTO goose_db_version(version_id,is_applied) VALUES (0,true), (?,true)", migrations.LatestVersion); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO goose_db_version(version_id,is_applied) VALUES (0,true)"); err != nil {
 			return err
+		}
+		// The current import snapshot includes every historical migration. Record
+		// that chain too, so goose does not treat its baseline as an out-of-order gap.
+		entries, err := migrations.PostgresFS.ReadDir("postgres")
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+				continue
+			}
+			prefix, _, _ := strings.Cut(entry.Name(), "_")
+			version, err := strconv.ParseInt(prefix, 10, 64)
+			if err != nil || version > migrations.LatestVersion {
+				return fmt.Errorf("invalid PostgreSQL import migration %q", entry.Name())
+			}
+			if _, err := tx.ExecContext(ctx, "INSERT INTO goose_db_version(version_id,is_applied) VALUES (?,true)", version); err != nil {
+				return err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {

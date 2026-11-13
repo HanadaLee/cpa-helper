@@ -38,6 +38,7 @@ const valueBaseline = ref<Record<string, ConfigValue>>({})
 const visualDirty = computed(() => cpaConfigFields.some(field => values[field.key] !== valueBaseline.value[field.key]))
 const sourceDirty = computed(() => sourceContent.value !== sourceBaseline.value)
 const isDirty = computed(() => visualDirty.value || sourceDirty.value)
+const visibleSections = computed(() => cpaConfigSections.filter(section => !section.v8Only || apiVersion.value === 8))
 
 function fieldLabel(field: CPAConfigFieldDefinition): string {
   return t(field.labelZH, field.labelEN)
@@ -103,6 +104,8 @@ function readFieldValue(root: unknown, field: CPAConfigFieldDefinition): ConfigV
       return Array.isArray(raw) ? raw.map(item => String(item)).join('\n') : ''
     case 'yaml':
       return yamlFragment(raw)
+    case 'yaml-object':
+      return raw === undefined || raw === null ? '' : yamlFragment(raw)
     case 'select':
       if (typeof raw === 'boolean') {
         return String(raw)
@@ -187,6 +190,16 @@ function writeFieldValue(document: ReturnType<typeof parseDocument>, field: CPAC
       }
       if (!Array.isArray(parsed)) {
         throw new Error(t(`${field.labelZH}必须是 YAML 数组`, `${field.labelEN} must be a YAML array`))
+      }
+      document.setIn(path, parsed)
+      break
+    }
+    case 'yaml-object': {
+      const text = String(value).trim()
+      if (!text) { document.deleteIn(path); break }
+      const parsed: unknown = parse(text)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(t(`${field.labelZH}必须是 YAML 对象`, `${field.labelEN} must be a YAML object`))
       }
       document.setIn(path, parsed)
       break
@@ -299,7 +312,7 @@ onMounted(loadConfig)
       <Tabs v-else-if="isLoaded" v-model="activeSection" class="cpa-config-tabs">
         <div class="cpa-config-toolbar">
           <TabsList v-if="editorMode === 'visual'" class="cpa-config-tabs-list">
-            <TabsTrigger v-for="section in cpaConfigSections" :key="section.key" :value="section.key">
+            <TabsTrigger v-for="section in visibleSections" :key="section.key" :value="section.key">
               {{ t(section.labelZH, section.labelEN) }}
             </TabsTrigger>
           </TabsList>
@@ -318,7 +331,7 @@ onMounted(loadConfig)
 
         <template v-if="editorMode === 'visual'">
           <TabsContent
-            v-for="section in cpaConfigSections"
+            v-for="section in visibleSections"
             :key="section.key"
             :value="section.key"
             class="cpa-config-tab-content"
@@ -359,10 +372,10 @@ onMounted(loadConfig)
                     </SelectContent>
                   </Select>
                   <Textarea
-                    v-else-if="field.kind === 'string-list' || field.kind === 'integer-list' || field.kind === 'yaml'"
+                    v-else-if="field.kind === 'string-list' || field.kind === 'integer-list' || field.kind === 'yaml' || field.kind === 'yaml-object'"
                     :id="`cpa-config-${field.key}`"
                     :model-value="scalarValue(field)"
-                    :class="field.kind === 'yaml' ? 'cpa-yaml-fragment' : 'cpa-list-input'"
+                    :class="field.kind === 'yaml' || field.kind === 'yaml-object' ? 'cpa-yaml-fragment' : 'cpa-list-input'"
                     spellcheck="false"
                     @update:model-value="updateScalar(field, $event)"
                   />

@@ -709,7 +709,7 @@ function formatPositiveLatency(value: number | null | undefined): string {
 }
 
 function formatModelWithReasoning(
-  record: Pick<UsageRecordListItem, 'model' | 'reasoning_effort' | 'request_service_tier'>,
+  record: Pick<UsageRecordListItem, 'model' | 'reasoning_effort' | 'request_service_tier' | 'effective_service_tier'>,
   includeFast = false,
 ): string {
   const model = textOrDash(record.model)
@@ -721,7 +721,7 @@ function formatModelWithReasoning(
   if (reasoningEffort) {
     parts.push(reasoningEffort)
   }
-  if (includeFast && isFastServiceTier(record.request_service_tier)) {
+  if (includeFast && isFastServiceTier(record.effective_service_tier ?? record.request_service_tier)) {
     parts.push('fast')
   }
   return parts.join(' ')
@@ -799,6 +799,39 @@ const detailRows = computed(() => {
     { label: t('总 Token', 'Total tokens'), value: formatInteger(record.total_tokens) },
     { label: t('费用', 'Cost'), value: formatRecordCost(record) },
   ]
+  if (record.effective_service_tier) {
+    rows.push(
+      { label: t('请求档位', 'Requested tier'), value: textOrDash(record.request_service_tier) },
+      { label: t('实际档位', 'Effective tier'), value: `${record.effective_service_tier} (${record.service_tier_evidence ?? '-'})` },
+    )
+  }
+  const core = record.cpa
+  if (core) {
+    for (const [label, value] of [
+      [t('上游模型', 'Upstream model'), core.upstream_model],
+      [t('响应模型', 'Response model'), core.response_model],
+      [t('执行器', 'Executor'), core.executor_type],
+      [t('发往上游的档位', 'Outbound tier'), core.outbound_service_tier],
+      [t('上游响应档位', 'Response tier'), core.response_service_tier],
+      [t('执行 ID', 'Execution ID'), core.execution_id],
+      [t('追踪 ID', 'Trace ID'), core.trace_id],
+      [t('会话 ID', 'Session ID'), core.session_id],
+      [t('父会话 ID', 'Parent session ID'), core.parent_session_id],
+    ]) {
+      if (typeof value === 'string' && value) rows.push({ label: label ?? '', value })
+    }
+    if (core.ttfb_ms !== undefined) rows.push({ label: 'TTFB', value: formatPositiveLatency(core.ttfb_ms) })
+    if (core.ttfa_ms !== undefined) rows.push({ label: 'TTFA', value: formatPositiveLatency(core.ttfa_ms) })
+    if (core.image_count !== undefined) rows.push({ label: t('图片数量', 'Image count'), value: formatInteger(core.image_count) })
+    if (core.web_search_requests !== undefined) rows.push({ label: t('搜索次数', 'Search requests'), value: formatInteger(core.web_search_requests) })
+    if (core.token_breakdown) {
+      rows.push({ label: t('Token 核算质量', 'Token accounting quality'), value: core.token_breakdown.quality ?? '-' })
+      if (typeof core.token_breakdown.output?.total_tokens === 'number') {
+        rows.push({ label: t('计费输出 Token（含推理）', 'Billable output tokens (including reasoning)'), value: formatInteger(core.token_breakdown.output.total_tokens) })
+      }
+    }
+    if (core.fail && record.failed) rows.push({ label: t('失败详情', 'Failure details'), value: jsonPretty(core.fail) })
+  }
   if (!isAccountScope.value) {
     rows.splice(
       4,

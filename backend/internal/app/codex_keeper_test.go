@@ -285,6 +285,10 @@ func TestKeeperAccountStatusCanBeSharedReadOnly(t *testing.T) {
 	requestJSONExpectStatus(t, handler, http.MethodGet, "/api/codex-keeper/auth-files/member.json", nil, memberCookies, http.StatusForbidden)
 	requestJSONExpectStatus(t, handler, http.MethodPost, "/api/codex-keeper/auth-files", nil, memberCookies, http.StatusForbidden)
 	requestJSONExpectStatus(t, handler, http.MethodPost, "/api/codex-keeper/oauth/start", nil, memberCookies, http.StatusForbidden)
+	requestJSONExpectStatus(t, handler, http.MethodDelete, "/api/codex-keeper/oauth/session?state=member-state", nil, memberCookies, http.StatusForbidden)
+	for _, action := range []string{"core-refresh", "core-verify", "siwc-bind"} {
+		requestJSONExpectStatus(t, handler, http.MethodPost, "/api/codex-keeper/accounts/member.json/"+action, nil, memberCookies, http.StatusForbidden)
+	}
 	requestJSONExpectStatus(t, handler, http.MethodGet, "/api/codex-keeper/oauth/status?state=member-state", nil, memberCookies, http.StatusForbidden)
 	requestJSONExpectStatus(t, handler, http.MethodPost, "/api/codex-keeper/oauth/callback", map[string]any{
 		"redirect_url": "http://localhost:1455/auth/callback?code=test",

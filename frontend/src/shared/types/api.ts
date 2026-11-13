@@ -315,6 +315,22 @@ export interface CodexKeeperResetCredits {
 }
 
 export interface CodexKeeperAccount {
+  v8_supported?: boolean
+  requires_sign_in?: boolean
+  renewal_state?: string
+  recovery_stage?: string
+  access_token_expires_at?: string | null
+  next_refresh_after?: string | null
+  adopted?: boolean
+  inference_verified?: boolean
+  renewal_verified?: boolean
+  refresh_error?: { code: string; message: string; http_status: number | null }
+  recovery_hint?: string
+  siwc_bind_supported?: boolean
+  use_siwc?: boolean
+  siwc_status?: string
+  siwc_bound?: boolean
+  siwc_expires_at?: string | null
   name: string
   provider: string
   email: string | null
@@ -402,7 +418,7 @@ export interface CodexKeeperOAuthStartResponse {
   state: string
 }
 
-export type CredentialOAuthProvider = 'codex' | 'anthropic' | 'antigravity' | 'gemini-cli' | 'kimi' | 'xai'
+export type CredentialOAuthProvider = 'codex' | 'anthropic' | 'antigravity' | 'gemini-cli' | 'kimi' | 'xai' | 'meta'
 
 export interface CodexKeeperOAuthStatusResponse {
   status: string
@@ -560,6 +576,32 @@ export interface UsageOverviewResponse {
 }
 
 export interface UsageRecordListItem {
+  effective_service_tier?: string
+  service_tier_evidence?: string
+  cpa?: {
+    accounting_version?: number
+    token_breakdown?: {
+      quality: string
+      total_tokens: number
+      input: { total_tokens: number; uncached_tokens: number; cache_read_tokens: number; cache_write_tokens: number }
+      output: { total_tokens: number; non_reasoning_tokens: number; reasoning_tokens: number }
+    }
+    upstream_model?: string
+    response_model?: string
+    executor_type?: string
+    outbound_service_tier?: string
+    response_service_tier?: string
+    execution_id?: string
+    trace_id?: string
+    session_id?: string
+    parent_session_id?: string
+    ttfb_ms?: number
+    ttfa_ms?: number
+    image_count?: number
+    web_search_requests?: number
+    fail?: { status_code?: number; message?: string }
+    [key: string]: unknown
+  } | null
   id: number
   timestamp: string
   api_key_description: string | null

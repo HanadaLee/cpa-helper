@@ -1,12 +1,15 @@
 import type { CPAConfigFieldDefinition } from './cpaConfigFields'
 
-// Canonical paths from CPA-Core-LTS v1-lts-0.1.2 internal/config/config_v8.go.
+// Canonical paths verified against CPA-Core-LTS v1-lts-0.2.0 config_v8.go.
 // Longest/specific prefixes must precede containers. Legacy is kept only for
 // older Core instances during a staged rollout, never mixed into a V8 document.
 const v8Paths: Record<string, string> = {
   host: 'server.host',
   port: 'server.port',
   tls: 'server.tls',
+  'kv-store': 'server.kv-store',
+  'response-compression': 'server.response-compression',
+  'save-cooldown-status': 'routing.cooldown.save-cooldown-status',
   'commercial-mode': 'server.commercial-mode',
   'remote-management': 'management',
   'api-keys': 'access.api-keys',

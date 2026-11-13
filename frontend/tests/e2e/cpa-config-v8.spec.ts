@@ -17,13 +17,13 @@ routing: {retry: {request-retry: 0}}
 plugins: {enabled: false, configs: {custom: {untouched: true}}}
 `
 
-async function mockConfig(page: Page, version = 8, fail = false) {
-  let content = version === 8 ? nativeYAML : 'host: ""\nport: 18316\napi-keys: [legacy-client]\n'
+async function mockConfig(page: Page, version = 8, fail = false, initialContent?: string) {
+  let content = initialContent ?? (version === 8 ? nativeYAML : 'host: ""\nport: 18316\napi-keys: [legacy-client]\n')
   const writes: { content: string, api_version: number, revision: string }[] = []
   await page.addInitScript(() => localStorage.setItem('cpa-helper-language', 'zh'))
   await page.route(url => url.pathname.startsWith('/api/'), async route => {
     const path = new URL(route.request().url()).pathname
-    if (path === '/api/auth/me') return route.fulfill({ json: { id: 1, username: 'admin', nickname: 'Admin', is_admin: true, must_change_password: false } })
+    if (path === '/api/auth/me') return route.fulfill({ json: { id: 1, username: 'admin', nickname: 'Admin', email: '', avatar: '', created_at: '2026-11-13T00:00:00+08:00', is_admin: true, cas_bound: false, can_change_password: true, must_change_password: false, can_view_account_status: true, can_view_usage_history: true } })
     if (path === '/api/branding') return route.fulfill({ json: { brand_name_zh: 'Gateway', brand_name_en: 'Gateway', brand_subtitle_zh: '测试', brand_subtitle_en: 'Test' } })
     if (path === '/api/settings') return route.fulfill({ json: {
       cliaproxy_url: 'http://127.0.0.1:8317', management_key: 'synthetic-key', model_request_url: '', model_request_extra_endpoints: [],
@@ -51,6 +51,29 @@ async function mockConfig(page: Page, version = 8, fail = false) {
   await expect(page.locator('#cpa-config-port')).toHaveValue('18316')
   return writes
 }
+
+test('Core 0.2 advanced settings preserve structured configuration and reject non-object policies', async ({ page }) => {
+  const content = nativeYAML.replace('server: {host: \'\', port: 18316}', 'server: {host: \'\', port: 18316, response-compression: {enabled: true, future-option: keep}}')
+  const writes = await mockConfig(page, 8, false, content)
+  await page.getByRole('tab', { name: 'Core 高级配置', exact: true }).click()
+  await page.locator('#cpa-config-kv-path').fill('/data/core-kv.db')
+  await page.locator('#cpa-config-response-compression').fill('[invalid-object]')
+  await page.getByRole('button', { name: '保存设置', exact: true }).click()
+  expect(writes).toHaveLength(0)
+  await page.locator('#cpa-config-response-compression').fill('enabled: true\nfuture-option: keep\nmin-bytes: 512')
+  await page.getByRole('button', { name: '保存设置', exact: true }).click()
+  await expect.poll(() => writes.length).toBe(1)
+  const saved = parse(writes[0].content)
+  expect(saved.server['kv-store'].path).toBe('/data/core-kv.db')
+  expect(saved.server['response-compression']).toEqual({ enabled: true, 'future-option': 'keep', 'min-bytes': 512 })
+  expect(saved.plugins).toEqual(parse(nativeYAML).plugins)
+  expect(saved['api-keys']).toEqual(parse(nativeYAML)['api-keys'])
+})
+
+test('legacy Core does not expose native V8 advanced settings', async ({ page }) => {
+  await mockConfig(page, 0)
+  await expect(page.getByRole('tab', { name: 'Core 高级配置', exact: true })).toHaveCount(0)
+})
 
 test('V8 visual settings keep provider groups separate from client keys and preserve unknown fields', async ({ page }) => {
   const writes = await mockConfig(page)
@@ -121,6 +144,7 @@ test('V8 upstream editing preserves untouched empty overrides and refreshes the 
   let revision = `"${'a'.repeat(64)}"`
   let items = [{ 'api-key': 'synthetic-key', 'base-url': 'https://example.invalid/v1', priority: 3,
     websockets: false, 'disable-cooling': false, models: [], headers: {}, 'excluded-models': [],
+    'connection-pool': { enabled: false, 'max-idle-conns-per-host': 2 },
     _cpa_v8: { group: 0, key: 0 },
   }]
   const writes: { items: typeof items, revision: string, api_version: number }[] = []
@@ -139,12 +163,14 @@ test('V8 upstream editing preserves untouched empty overrides and refreshes the 
   await page.getByRole('menuitem', { name: '编辑', exact: true }).click()
   const editor = page.locator('[data-slot="sheet-content"]')
   await editor.locator('#upstream-priority').fill('8')
+  expect(JSON.parse(await editor.locator('#upstream-connection-pool').inputValue())).toEqual({ enabled: false, 'max-idle-conns-per-host': 2 })
   await editor.getByRole('button', { name: '保存', exact: true }).click()
   await expect(editor).toBeHidden()
   expect(writes).toHaveLength(1)
   expect(writes[0]).toMatchObject({ api_version: 8, revision: `"${'a'.repeat(64)}"` })
   expect(writes[0].items[0]).toMatchObject({
     priority: 8, websockets: false, 'disable-cooling': false, models: [], headers: {}, 'excluded-models': [],
+    'connection-pool': { enabled: false, 'max-idle-conns-per-host': 2 },
     _cpa_v8: { group: 0, key: 0 },
   })
   await page.getByRole('switch', { name: '切换上游状态', exact: true }).click()

@@ -134,6 +134,7 @@ interface APIKeyFormRow {
 }
 
 interface UpstreamForm {
+  connectionPool: string
   name: string
   apiKey: string
   baseUrl: string
@@ -179,6 +180,8 @@ const modelDiscoverySearch = ref('')
 const discoveredModels = ref<DiscoveredUpstreamModel[]>([])
 const selectedDiscoveredModelNames = ref<string[]>([])
 const sections = reactive<Record<UpstreamSection, UpstreamItem[]>>({
+  'interactions-api-key': [],
+  'meta-api-key': [],
   'gemini-api-key': [],
   'codex-api-key': [],
   'xai-api-key': [],
@@ -190,6 +193,8 @@ const form = reactive<UpstreamForm>(emptyForm())
 
 const sectionDefinitions = computed<SectionDefinition[]>(() => [
   { name: 'gemini-api-key', label: 'Gemini', description: t('Gemini API 密钥', 'Gemini API keys'), icon: Sparkles },
+  { name: 'interactions-api-key', label: 'Interactions', description: t('Google Interactions 上游', 'Google Interactions upstreams'), icon: Sparkles },
+  { name: 'meta-api-key', label: 'Meta', description: t('Meta 上游', 'Meta upstreams'), icon: Bot },
   { name: 'codex-api-key', label: 'Codex', description: t('Codex 上游', 'Codex upstreams'), icon: Code2 },
   { name: 'xai-api-key', label: 'xAI', description: t('xAI 上游', 'xAI upstreams'), icon: KeyRound },
   { name: 'claude-api-key', label: 'Claude', description: t('Claude API 密钥', 'Claude API keys'), icon: Bot },
@@ -207,7 +212,7 @@ const activeDefinition = computed(
 )
 const isOpenAISection = computed(() => activeSection.value === 'openai-compatibility')
 const isClaudeSection = computed(() => activeSection.value === 'claude-api-key')
-const canDiscoverModels = computed(() => activeSection.value !== 'vertex-api-key')
+const canDiscoverModels = computed(() => !['vertex-api-key', 'interactions-api-key', 'meta-api-key'].includes(activeSection.value))
 const currentItems = computed(() => sections[activeSection.value])
 const totalResources = computed(() => upstreamSectionNames.reduce((total, name) => total + sections[name].length, 0))
 const existingModelNameSet = computed(() => new Set(
@@ -260,6 +265,7 @@ const drawerContentClass = computed(() => cn(
 
 function emptyForm(): UpstreamForm {
   return {
+    connectionPool: '',
     name: '',
     apiKey: '',
     baseUrl: '',
@@ -389,6 +395,7 @@ async function loadUpstreams(showSuccess = false) {
 function formFromItem(item: UpstreamItem): UpstreamForm {
   const cloak = readObject(item.cloak) ?? {}
   return {
+    connectionPool: item['connection-pool'] ? JSON.stringify(item['connection-pool'], null, 2) : '',
     name: readString(item, 'name'),
     apiKey: readString(item, 'api-key'),
     baseUrl: readString(item, 'base-url'),
@@ -598,6 +605,7 @@ function retainUneditedV8Fields(payload: UpstreamItem): UpstreamItem {
   if (apiVersion.value !== 8 || !selectedItem.value) return payload
   const baseline = formFromItem(selectedItem.value)
   const fields: Record<string, (keyof UpstreamForm)[]> = {
+    'connection-pool': ['connectionPool'],
     models: ['models'], headers: ['headers'], 'base-url': ['baseUrl'], prefix: ['prefix'],
     priority: ['priority'], 'disable-cooling': ['disableCooling'], name: ['name'],
     'api-key-entries': ['apiKeyEntries'], disabled: ['disabled'], 'api-key': ['apiKey'],
@@ -618,6 +626,20 @@ function retainUneditedV8Fields(payload: UpstreamItem): UpstreamItem {
 
 function buildPayload(): UpstreamItem | null {
   const existing = selectedItem.value ? { ...selectedItem.value } : {}
+  if (apiVersion.value === 8) {
+    const text = form.connectionPool.trim()
+    if (!text) delete existing['connection-pool']
+    else {
+      try {
+        const pool: unknown = JSON.parse(text)
+        if (!pool || typeof pool !== 'object' || Array.isArray(pool)) throw new Error('object required')
+        existing['connection-pool'] = pool
+      } catch {
+        message.error(t('连接池配置必须是 JSON 对象', 'Connection pool configuration must be a JSON object'))
+        return null
+      }
+    }
+  }
   const models = formModels()
   const headers = formHeaders()
   if (models) existing.models = models
@@ -1138,6 +1160,13 @@ void loadUpstreams()
                     <FieldTitle>{{ t('禁用冷却调度', 'Disable cooldown scheduling') }}</FieldTitle>
                   </FieldContent>
                   <Switch v-model="form.disableCooling" />
+                </Field>
+              </FieldGroup>
+
+              <FieldGroup v-if="apiVersion === 8">
+                <Field>
+                  <FieldLabel for="upstream-connection-pool">{{ t('连接池配置（JSON）', 'Connection pool configuration (JSON)') }}</FieldLabel>
+                  <Textarea id="upstream-connection-pool" v-model="form.connectionPool" :rows="4" :placeholder="t('留空使用分组默认值；设置 enabled: false 可停用', 'Leave empty to inherit the group; set enabled: false to disable')" />
                 </Field>
               </FieldGroup>
 

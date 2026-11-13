@@ -123,6 +123,7 @@ func TestPostgresApplicationParity(t *testing.T) {
 		{"keeper-enable", TestManualKeeperRefreshReenablesRecoverableUnauthorizedDisabledAccount},
 		{"alias-billing", TestSaveUsageMessageUsesAliasForStoredModelAndCost},
 		{"fast-billing", TestSaveUsageMessageStoresFastTierAndFixedFastCost},
+		{"cpa-v8-metadata", TestCPAUsageMetadataPersistsWithoutChangingHistoricalCharges},
 		{"long-context-billing", TestSaveUsageMessageStoresFixedLongContextCost},
 		{"oidc-cas", TestOIDCSharedCASIdentityAndLogout},
 		{"oidc-registration", TestOIDCNewUserCanUseCASAndRetainsDefaultQuotas},

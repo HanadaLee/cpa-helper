@@ -129,8 +129,12 @@ type keeperOAuthStartResponse struct {
 }
 
 type keeperOAuthStartRequest struct {
-	Provider  string `json:"provider"`
-	ProjectID string `json:"project_id"`
+	Provider    string `json:"provider"`
+	ProjectID   string `json:"project_id"`
+	Name        string `json:"name"`
+	AuthIndex   string `json:"auth_index"`
+	Verify      bool   `json:"verify"`
+	VerifyModel string `json:"verify_model"`
 }
 
 type keeperOAuthStatusResponse struct {
@@ -144,6 +148,7 @@ type keeperOAuthCallbackRequest struct {
 }
 
 type keeperAccount struct {
+	keeperCredentialLifecycle
 	Name                   string         `json:"name"`
 	Provider               string         `json:"provider"`
 	Email                  *string        `json:"email"`
@@ -183,6 +188,22 @@ type keeperAccount struct {
 }
 
 type keeperAccountResponse struct {
+	V8Supported            bool                            `json:"v8_supported"`
+	RequiresSignIn         bool                            `json:"requires_sign_in"`
+	RenewalState           string                          `json:"renewal_state,omitempty"`
+	RecoveryStage          string                          `json:"recovery_stage,omitempty"`
+	AccessTokenExpiresAt   *string                         `json:"access_token_expires_at,omitempty"`
+	NextRefreshAfter       *string                         `json:"next_refresh_after,omitempty"`
+	Adopted                bool                            `json:"adopted"`
+	InferenceVerified      bool                            `json:"inference_verified"`
+	RenewalVerified        bool                            `json:"renewal_verified"`
+	RefreshError           map[string]any                  `json:"refresh_error,omitempty"`
+	RecoveryHint           string                          `json:"recovery_hint,omitempty"`
+	SIWCBindSupported      bool                            `json:"siwc_bind_supported"`
+	UseSIWC                bool                            `json:"use_siwc"`
+	SIWCStatus             string                          `json:"siwc_status,omitempty"`
+	SIWCBound              bool                            `json:"siwc_bound"`
+	SIWCExpiresAt          *string                         `json:"siwc_expires_at,omitempty"`
 	Name                   string                          `json:"name"`
 	Provider               string                          `json:"provider"`
 	Email                  *string                         `json:"email"`
@@ -946,6 +967,8 @@ func (a *App) handleCodexKeeper(w http.ResponseWriter, r *http.Request) error {
 		return forbiddenError("需要管理员权限")
 	}
 	switch {
+	case len(parts) == 3 && parts[0] == "accounts" && (parts[2] == "core-refresh" || parts[2] == "core-verify" || parts[2] == "siwc-bind"):
+		return a.keeperCoreCredentialAction(w, r, parts[1], parts[2])
 	case len(parts) == 1 && parts[0] == "settings":
 		if r.Method == http.MethodGet {
 			cfg, err := a.loadConfig(r.Context())
@@ -1029,6 +1052,24 @@ func (a *App) handleCodexKeeper(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		return a.getKeeperOAuthStatus(w, r)
+	case len(parts) == 2 && parts[0] == "oauth" && parts[1] == "session":
+		if err := requireMethod(r, http.MethodDelete); err != nil {
+			return err
+		}
+		state := r.URL.Query().Get("state")
+		if err := validateKeeperOAuthState(state); err != nil {
+			return err
+		}
+		cfg, err := a.loadConfig(r.Context())
+		if err != nil {
+			return err
+		}
+		_, _, err = a.keeperRequest(r.Context(), cfg, http.MethodDelete, "/v8/management/oauth/session", url.Values{"state": []string{state}}, nil, time.Duration(cfg.CodexKeeper.CPATimeoutSeconds)*time.Second)
+		if err != nil {
+			return err
+		}
+		writeNoContent(w)
+		return nil
 	case len(parts) == 2 && parts[0] == "oauth" && parts[1] == "callback":
 		if err := requireMethod(r, http.MethodPost); err != nil {
 			return err
@@ -1252,6 +1293,22 @@ func (a *App) keeperAccountResponses(accounts []keeperAccount, windowUsages map[
 	for _, account := range accounts {
 		usage := windowUsages[account.Name]
 		responses = append(responses, keeperAccountResponse{
+			V8Supported:            account.V8Supported,
+			RequiresSignIn:         account.RequiresSignIn,
+			RenewalState:           account.RenewalState,
+			RecoveryStage:          account.RecoveryStage,
+			AccessTokenExpiresAt:   account.AccessTokenExpiresAt,
+			NextRefreshAfter:       account.NextRefreshAfter,
+			Adopted:                account.Adopted,
+			InferenceVerified:      account.InferenceVerified,
+			RenewalVerified:        account.RenewalVerified,
+			RefreshError:           account.RefreshError,
+			RecoveryHint:           account.RecoveryHint,
+			SIWCBindSupported:      account.SIWCBindSupported,
+			UseSIWC:                account.UseSIWC,
+			SIWCStatus:             account.SIWCStatus,
+			SIWCBound:              account.SIWCBound,
+			SIWCExpiresAt:          account.SIWCExpiresAt,
 			Name:                   account.Name,
 			Provider:               account.Provider,
 			Email:                  account.Email,
@@ -1583,7 +1640,7 @@ func keeperQuotaWindowBounds(minStart, maxEnd time.Time, usage *keeperQuotaWindo
 func (a *App) keeperUsageRecordsInRange(ctx context.Context, start, end time.Time) ([]UsageRecord, error) {
 	rows, err := a.db.QueryContext(ctx, `SELECT id, CAST(timestamp AS TEXT), usage_username, api_key_description, provider, model, reasoning_effort, request_service_tier, endpoint, source,
 		source_account, request_id, auth, auth_index, latency_ms, ttft_ms, failed, input_tokens, output_tokens, cached_tokens,
-		cache_read_tokens, cache_creation_tokens, reasoning_tokens, total_tokens, cost_usd, unpriced, dedupe_key, raw_json
+		cache_read_tokens, cache_creation_tokens, reasoning_tokens, total_tokens, cost_usd, unpriced, dedupe_key, raw_json, cpa_metadata_json
 		FROM usage_records
 		WHERE timestamp >= ? AND timestamp < ?
 		ORDER BY timestamp`, dbTime(start), dbTime(end))
@@ -2612,6 +2669,14 @@ func (a *App) processKeeperAuth(ctx context.Context, cfg AppConfig, authInfo map
 		name = "unknown"
 	}
 	result := keeperAccountResult{Name: name, Result: "skipped", CheckedAt: now}
+	if keeperBool(authInfo["_helper_v8"]) && (keeperBool(authInfo["requires_sign_in"]) || keeperBool(authInfo["use_siwc"])) {
+		action := "凭证续期由 Core 管理，请查看恢复状态或在本实例重新授权"
+		result.LatestAction = &action
+		// No legacy token probing or state overwrite: Core owns this credential's
+		// recovery. Keep the last measured quota, identity and disabled state intact.
+		logFn(name + ": " + action)
+		return result
+	}
 	detail, err := a.getKeeperRemoteAuthFile(ctx, cfg, name)
 	if err != nil {
 		message := "读取认证文件详情失败：" + err.Error()
@@ -2971,7 +3036,12 @@ func isKeeperCachedBadCredentialState(state keeperAuthState) bool {
 }
 
 func (a *App) listKeeperRemoteAuthFiles(ctx context.Context, cfg AppConfig) ([]map[string]any, error) {
-	_, payload, err := a.keeperRequest(ctx, cfg, http.MethodGet, "/v0/management/auth-files", nil, nil, time.Duration(cfg.CodexKeeper.CPATimeoutSeconds)*time.Second)
+	response, payload, err := a.keeperRequest(ctx, cfg, http.MethodGet, "/v8/management/credentials", nil, nil, time.Duration(cfg.CodexKeeper.CPATimeoutSeconds)*time.Second)
+	native := true
+	if response != nil && response.StatusCode == http.StatusNotFound && !json.Valid(payload) {
+		native = false
+		_, payload, err = a.keeperRequest(ctx, cfg, http.MethodGet, "/v0/management/auth-files", nil, nil, time.Duration(cfg.CodexKeeper.CPATimeoutSeconds)*time.Second)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -2979,7 +3049,11 @@ func (a *App) listKeeperRemoteAuthFiles(ctx context.Context, cfg AppConfig) ([]m
 	if err := json.Unmarshal(payload, &raw); err != nil {
 		return nil, validationError("读取认证文件失败：响应不是有效 JSON")
 	}
-	return extractKeeperObjects(raw, []string{"files", "items", "data", "value"}), nil
+	items := extractKeeperObjects(raw, []string{"files", "items", "data", "value"})
+	for _, item := range items {
+		item["_helper_v8"] = native
+	}
+	return items, nil
 }
 
 func (a *App) listKeeperRemoteAuthFileModels(ctx context.Context, cfg AppConfig, name string) ([]map[string]any, error) {
@@ -3045,6 +3119,9 @@ func (a *App) startKeeperOAuth(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	request.ProjectID = strings.TrimSpace(request.ProjectID)
+	if err := validateKeeperOAuthTarget(request); err != nil {
+		return err
+	}
 	if len(request.ProjectID) > keeperMaxOAuthProjectIDLength || strings.IndexFunc(request.ProjectID, unicode.IsControl) >= 0 {
 		return validationError("OAuth 项目 ID 无效")
 	}
@@ -3063,14 +3140,30 @@ func (a *App) startKeeperOAuth(w http.ResponseWriter, r *http.Request) error {
 	if provider == "gemini-cli" && request.ProjectID != "" {
 		query.Set("project_id", request.ProjectID)
 	}
-	_, payload, err := a.keeperRequest(
+	query.Set("provider", keeperOAuthCallbackProvider(provider))
+	if request.Name != "" {
+		query.Set("name", strings.TrimSpace(request.Name))
+	}
+	if request.AuthIndex != "" {
+		query.Set("auth_index", strings.TrimSpace(request.AuthIndex))
+	}
+	if request.Verify {
+		query.Set("verify", "true")
+	}
+	if request.VerifyModel != "" {
+		query.Set("verify_model", strings.TrimSpace(request.VerifyModel))
+	}
+	legacyPath := "/v0/management/" + endpoint
+	if request.Name != "" || request.AuthIndex != "" || request.Verify || request.VerifyModel != "" {
+		legacyPath = ""
+	}
+	_, payload, err := a.keeperCompatibleRequest(
 		r.Context(),
 		cfg,
 		http.MethodGet,
-		"/v0/management/"+endpoint,
+		"/v8/management/oauth/auth-url", legacyPath,
 		query,
 		nil,
-		time.Duration(cfg.CodexKeeper.CPATimeoutSeconds)*time.Second,
 	)
 	if err != nil {
 		return err
@@ -3101,14 +3194,13 @@ func (a *App) getKeeperOAuthStatus(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	query := url.Values{"state": []string{state}}
-	_, payload, err := a.keeperRequest(
+	_, payload, err := a.keeperCompatibleRequest(
 		r.Context(),
 		cfg,
 		http.MethodGet,
-		"/v0/management/get-auth-status",
+		"/v8/management/oauth/status", "/v0/management/get-auth-status",
 		query,
 		nil,
-		time.Duration(cfg.CodexKeeper.CPATimeoutSeconds)*time.Second,
 	)
 	if err != nil {
 		return err
@@ -3143,17 +3235,16 @@ func (a *App) submitKeeperOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return err
 	}
-	_, _, err = a.keeperRequest(
+	_, _, err = a.keeperCompatibleRequest(
 		r.Context(),
 		cfg,
 		http.MethodPost,
-		"/v0/management/oauth-callback",
+		"/v8/management/oauth/callback", "/v0/management/oauth-callback",
 		nil,
 		map[string]string{
 			"provider":     keeperOAuthCallbackProvider(provider),
 			"redirect_url": request.RedirectURL,
 		},
-		time.Duration(cfg.CodexKeeper.CPATimeoutSeconds)*time.Second,
 	)
 	if err != nil {
 		return err
@@ -3174,6 +3265,7 @@ func keeperOAuthProvider(value string) (string, string, error) {
 		"gemini-cli":  "gemini-cli-auth-url",
 		"kimi":        "kimi-auth-url",
 		"xai":         "xai-auth-url",
+		"meta":        "meta-auth-url",
 	}
 	endpoint, ok := endpoints[provider]
 	if !ok {
@@ -4231,30 +4323,31 @@ func (a *App) listKeeperCredentials(ctx context.Context) ([]keeperAccount, bool,
 		item := remoteByName[name]
 		provider := keeperCredentialProvider(item)
 		account := keeperAccount{
-			Name:          name,
-			Provider:      provider,
-			Email:         keeperStringPtr(item["email"]),
-			Label:         keeperStringPtr(item["label"]),
-			Account:       keeperStringPtr(item["account"]),
-			ProjectID:     keeperStringPtr(item["project_id"], item["projectId"]),
-			UserID:        keeperStringPtr(item["user_id"], item["userId"]),
-			AuthIndex:     keeperRemoteAuthIndex(item),
-			AccountType:   keeperStringPtr(item["account_type"], item["accountType"]),
-			PlanType:      keeperStringPtr(item["plan_type"], item["planType"]),
-			Weight:        keeperIntPtr(item["weight"]),
-			RequestRetry:  keeperIntPtr(item["request_retry"], item["request-retry"]),
-			Disabled:      keeperBool(item["disabled"]),
-			Unavailable:   keeperBool(item["unavailable"]),
-			RuntimeOnly:   keeperBool(item["runtime_only"], item["runtimeOnly"]),
-			Status:        keeperStringPtr(item["status"]),
-			StatusMessage: keeperStringPtr(item["status_message"], item["statusMessage"]),
-			Success:       keeperIntPtr(item["success"]),
-			Failed:        keeperIntPtr(item["failed"]),
-			Quota:         keeperObject(item["quota"]),
-			ModelQuotas:   keeperObject(item["model_quotas"], item["modelQuotas"]),
-			LastRefreshAt: keeperRemoteTimePtr(item["last_refresh"], item["lastRefresh"], item["last_refreshed_at"]),
-			ModifiedAt:    keeperRemoteTimePtr(item["modtime"], item["updated_at"], item["modified"]),
-			Priority:      keeperIntPtr(item["priority"]),
+			keeperCredentialLifecycle: keeperLifecycle(item),
+			Name:                      name,
+			Provider:                  provider,
+			Email:                     keeperStringPtr(item["email"]),
+			Label:                     keeperStringPtr(item["label"]),
+			Account:                   keeperStringPtr(item["account"]),
+			ProjectID:                 keeperStringPtr(item["project_id"], item["projectId"]),
+			UserID:                    keeperStringPtr(item["user_id"], item["userId"]),
+			AuthIndex:                 keeperRemoteAuthIndex(item),
+			AccountType:               keeperStringPtr(item["account_type"], item["accountType"]),
+			PlanType:                  keeperStringPtr(item["plan_type"], item["planType"]),
+			Weight:                    keeperIntPtr(item["weight"]),
+			RequestRetry:              keeperIntPtr(item["request_retry"], item["request-retry"]),
+			Disabled:                  keeperBool(item["disabled"]),
+			Unavailable:               keeperBool(item["unavailable"]),
+			RuntimeOnly:               keeperBool(item["runtime_only"], item["runtimeOnly"]),
+			Status:                    keeperStringPtr(item["status"]),
+			StatusMessage:             keeperStringPtr(item["status_message"], item["statusMessage"]),
+			Success:                   keeperIntPtr(item["success"]),
+			Failed:                    keeperIntPtr(item["failed"]),
+			Quota:                     keeperObject(item["quota"]),
+			ModelQuotas:               keeperObject(item["model_quotas"], item["modelQuotas"]),
+			LastRefreshAt:             keeperRemoteTimePtr(item["last_refresh"], item["lastRefresh"], item["last_refreshed_at"]),
+			ModifiedAt:                keeperRemoteTimePtr(item["modtime"], item["updated_at"], item["modified"]),
+			Priority:                  keeperIntPtr(item["priority"]),
 		}
 		if inspected, ok := inspectedByName[name]; ok && keeperIsCodexProvider(provider) {
 			if account.Email == nil {

@@ -54,6 +54,20 @@ func upstreamV8Effective(group, key map[string]any) map[string]any {
 	delete(item, "keys")
 	for name, value := range key {
 		if value != nil { // null inherits, whereas false, 0 and [] override.
+			if name == "connection-pool" {
+				base, baseOK := group[name].(map[string]any)
+				override, overrideOK := value.(map[string]any)
+				if baseOK && overrideOK {
+					merged := upstreamObjectCopy(base)
+					for field, value := range override {
+						if value != nil { // Nested null also inherits Core's pointer-valued defaults.
+							merged[field] = value
+						}
+					}
+					item[name] = merged
+					continue
+				}
+			}
 			item[name] = value
 		}
 	}
@@ -122,7 +136,7 @@ func clearUpstreamReadOnly(item map[string]any) {
 
 func upstreamSharedField(field string) bool {
 	switch field {
-	case "priority", "prefix", "proxy-url", "headers", "models", "excluded-models", "disable-cooling", "request-retry", "request-scoped-errors":
+	case "priority", "prefix", "proxy-url", "headers", "models", "excluded-models", "disable-cooling", "request-retry", "request-scoped-errors", "connection-pool":
 		return true
 	}
 	return false

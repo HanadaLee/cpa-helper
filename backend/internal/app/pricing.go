@@ -1075,10 +1075,21 @@ func calculateRecordCost(record UsageRecord, prices map[[2]string]ModelPrice) (f
 		}
 		return mathRound(*requestUSD*usageFastMultiplier(record, price), 8), false
 	}
+	breakdown, reported := cpaAccounting(record)
+	if reported && breakdown == nil {
+		return 0, true
+	}
 	if price == nil {
-		return 0, usageAggregateTotalTokens(record) > 0
+		return 0, usageAggregateTotalTokens(record) > 0 || (breakdown != nil && breakdown.TotalTokens > 0)
 	}
 	rates := tokenRatesForRecord(record, price)
+	if breakdown != nil {
+		amount := float64(breakdown.Input.UncachedTokens)*rates.InputUSDPerMillion/1_000_000 +
+			float64(breakdown.Input.CacheReadTokens)*rates.CacheReadUSDPerMillion/1_000_000 +
+			float64(breakdown.Input.CacheWriteTokens)*rates.CacheCreationUSDPerMillion/1_000_000 +
+			float64(breakdown.Output.TotalTokens)*rates.OutputUSDPerMillion/1_000_000
+		return mathRound(amount*usageFastMultiplier(record, price), 8), false
+	}
 	inputTokens := nonNegativeTokens(record.InputTokens)
 	outputTokens := nonNegativeTokens(record.OutputTokens)
 	amount := 0.0
@@ -1144,6 +1155,9 @@ func usesLongContextRates(record UsageRecord, price *ModelPrice) bool {
 // tier. OpenAI-style usage normally reports cached tokens as part of input;
 // the fallback also handles sources that report cached input separately.
 func usagePromptTokens(record UsageRecord) int {
+	if breakdown, _ := cpaAccounting(record); breakdown != nil {
+		return int(breakdown.Input.TotalTokens)
+	}
 	inputTokens := nonNegativeTokens(record.InputTokens)
 	if isClaudeProvider(record.Provider) {
 		return inputTokens + nonNegativeTokens(record.CacheReadTokens) + nonNegativeTokens(record.CacheCreationTokens)
@@ -1160,7 +1174,8 @@ func usagePromptTokens(record UsageRecord) int {
 }
 
 func usageFastMultiplier(record UsageRecord, price *ModelPrice) float64 {
-	if !price.FastEnabled || !isFastServiceTier(record.RequestServiceTier) {
+	tier, _ := cpaServiceTier(record)
+	if !price.FastEnabled || !isFastServiceTier(&tier) {
 		return 1
 	}
 	if price.LongContextFastUnsupported && usesLongContextRates(record, price) {

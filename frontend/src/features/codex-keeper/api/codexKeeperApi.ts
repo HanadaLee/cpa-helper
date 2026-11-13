@@ -28,15 +28,29 @@ export function uploadCodexKeeperAuthFiles(files: File[]): Promise<CodexKeeperAu
 export function startCodexKeeperOAuth(
   provider: CredentialOAuthProvider,
   projectId?: string,
+  target?: { name: string; auth_index?: string | null },
 ): Promise<CodexKeeperOAuthStartResponse> {
   return apiClient.post<CodexKeeperOAuthStartResponse>('/codex-keeper/oauth/start', {
     provider,
+    ...target,
     project_id: projectId?.trim() || undefined,
   })
 }
 
 export function getCodexKeeperOAuthStatus(state: string): Promise<CodexKeeperOAuthStatusResponse> {
   return apiClient.get<CodexKeeperOAuthStatusResponse>('/codex-keeper/oauth/status', { state })
+}
+
+export function cancelCodexKeeperOAuth(state: string): Promise<void> {
+  return apiClient.delete(`/codex-keeper/oauth/session?state=${encodeURIComponent(state)}`)
+}
+
+export function coreCredentialAction(name: string, action: 'core-refresh' | 'core-verify'): Promise<void> {
+  return apiClient.post<void>(`/codex-keeper/accounts/${encodeURIComponent(name)}/${action}`)
+}
+
+export function bindCredentialSIWC(name: string): Promise<CodexKeeperOAuthStartResponse> {
+  return apiClient.post<CodexKeeperOAuthStartResponse>(`/codex-keeper/accounts/${encodeURIComponent(name)}/siwc-bind`)
 }
 
 export function submitCodexKeeperOAuthCallback(

@@ -1,4 +1,4 @@
-export type CPAConfigFieldKind = 'boolean' | 'string' | 'number' | 'select' | 'string-list' | 'integer-list' | 'yaml'
+export type CPAConfigFieldKind = 'boolean' | 'string' | 'number' | 'select' | 'string-list' | 'integer-list' | 'yaml' | 'yaml-object'
 
 export interface CPAConfigOption {
   value: string
@@ -22,6 +22,7 @@ export interface CPAConfigFieldDefinition {
 }
 
 export interface CPAConfigSectionDefinition {
+  v8Only?: boolean
   key: string
   labelZH: string
   labelEN: string
@@ -240,5 +241,36 @@ export const cpaConfigSections: CPAConfigSectionDefinition[] = [
     ],
   },
 ]
+
+cpaConfigSections.push({
+  key: 'core-v8',
+  labelZH: 'Core 高级配置', labelEN: 'Core Advanced',
+  descriptionZH: '管理新版 Core 的持久化、会话、客户端适配与上游行为。对象字段使用 YAML，留空恢复默认。',
+  descriptionEN: 'Manage current Core persistence, sessions, client compatibility, and upstream behavior. Object fields use YAML; leave empty to restore defaults.',
+  v8Only: true,
+  fields: [
+    booleanField('kv-disabled', ['server', 'kv-store', 'disabled'], '禁用本地 KV', 'Disable local KV', '关闭本地 KV 持久化。', 'Disable local KV persistence.'),
+    { key: 'kv-path', path: ['server', 'kv-store', 'path'], kind: 'string', labelZH: 'KV 文件路径', labelEN: 'KV file path', descriptionZH: '留空时使用认证目录中的 kv.db。', descriptionEN: 'Defaults to kv.db in the authentication directory.' },
+    booleanField('save-cooldown', ['routing', 'cooldown', 'save-cooldown-status'], '持久保存冷却状态', 'Persist cooldown state', '在凭证文件旁保存冷却状态。', 'Save cooldown state next to credential files.'),
+    booleanField('session-subagents', ['routing', 'session-affinity-subagents'], '子代理继承会话亲和', 'Inherit session affinity for subagents', '启用会话亲和时，子代理优先继承父会话凭证。', 'When session affinity is enabled, subagents prefer their parent session credential.', true),
+    { key: 'session-rebind', path: ['routing', 'session-affinity-rebind-on'], kind: 'select', labelZH: '会话重新绑定策略', labelEN: 'Session rebind policy', defaultValue: 'any', options: [
+      { value: 'any', labelZH: '任意凭证故障', labelEN: 'Any credential failure' },
+      { value: 'quota', labelZH: '仅配额故障', labelEN: 'Quota failures only' },
+    ] },
+    { key: 'reasoning-policy', path: ['requests', 'reasoning-effort'], kind: 'yaml', labelZH: '推理强度策略', labelEN: 'Reasoning effort policy', wide: true },
+    booleanField('multi-agent-v2', ['client', 'codex', 'optimize-multi-agent-v2'], 'Codex 多代理适配', 'Codex multi-agent compatibility', '适配 Codex 多代理请求与工具行为。', 'Adapt Codex multi-agent requests and tool behavior.'),
+    booleanField('apply-patch', ['client', 'codex', 'enable-apply-patch'], 'Codex apply_patch 适配', 'Codex apply_patch compatibility', '启用 Core 的 apply_patch 客户端适配。', 'Enable Core apply_patch client compatibility.'),
+    booleanField('show-commentary', ['client', 'claude', 'show-codex-commentary'], '保留 Codex commentary', 'Preserve Codex commentary', '向 Claude 客户端呈现 Codex commentary。', 'Expose Codex commentary to Claude clients.'),
+    { key: 'search-result-cache', path: ['client', 'codex', 'web-search-result-cache'], kind: 'yaml-object', labelZH: '搜索结果回放缓存', labelEN: 'Search result replay cache', wide: true },
+    { key: 'response-compression', path: ['server', 'response-compression'], kind: 'yaml-object', labelZH: '响应压缩配置', labelEN: 'Response compression', wide: true },
+    { key: 'credential-concurrency', path: ['credentials', 'concurrency'], kind: 'yaml-object', labelZH: '凭证并发策略', labelEN: 'Credential concurrency policy', wide: true },
+    { key: 'credential-in-flight', path: ['credentials', 'in-flight'], kind: 'yaml-object', labelZH: '在途请求策略', labelEN: 'In-flight request policy', wide: true },
+    { key: 'codex-outbound', path: ['upstream', 'codex', 'outbound'], kind: 'yaml-object', labelZH: 'Codex 出站策略', labelEN: 'Codex outbound policy', wide: true },
+    { key: 'codex-cache-affinity', path: ['upstream', 'codex', 'cache-affinity'], kind: 'yaml-object', labelZH: 'Codex 缓存亲和', labelEN: 'Codex cache affinity', wide: true },
+    { key: 'codex-model-fallback', path: ['upstream', 'codex', 'model-fallback'], kind: 'yaml-object', labelZH: 'Codex 模型回退', labelEN: 'Codex model fallback', wide: true },
+    { key: 'codex-continuity', path: ['upstream', 'codex', 'rate-limit-continuity'], kind: 'yaml-object', labelZH: 'Codex 限流连续性', labelEN: 'Codex rate-limit continuity', wide: true },
+    { key: 'claude-timezone', path: ['upstream', 'claude', 'header-defaults', 'timezone'], kind: 'string', labelZH: 'Claude 时区', labelEN: 'Claude timezone' },
+  ],
+})
 
 export const cpaConfigFields = cpaConfigSections.flatMap(section => section.fields)

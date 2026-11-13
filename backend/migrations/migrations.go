@@ -3,7 +3,7 @@ package migrations
 import "embed"
 
 // LatestVersion is the newest embedded migration version this binary expects.
-const LatestVersion int64 = 202609280001
+const LatestVersion int64 = 202611130001
 
 // FS contains SQL migrations embedded into the application binary.
 //
@@ -13,5 +13,5 @@ var FS embed.FS
 // PostgresFS has an independent SQL migration chain. SQLite's historical Go migrations
 // must never be registered against PostgreSQL.
 //
-//go:embed postgres/*.sql
+//go:embed postgres/*.sql postgres-import/*.sql
 var PostgresFS embed.FS

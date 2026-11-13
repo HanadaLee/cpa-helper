@@ -4,6 +4,9 @@ type MessagePair = readonly [zh: string, en: string]
 type ServerMessagePattern = readonly [RegExp, (match: RegExpMatchArray) => string]
 
 const exactServerMessages: MessagePair[] = [
+  ['凭证续期由 Core 管理，请查看恢复状态或在本实例重新授权', 'Credential renewal is managed by Core. Check its recovery state or reauthorize on this instance.'],
+  ['OAuth 目标参数无效', 'Invalid OAuth target parameters'],
+  ['SIWC 授权响应无效', 'Invalid SIWC authorization response'],
   ['CPA 配置接口已变更，请重新加载后再保存', 'The CPA configuration API changed. Reload before saving.'],
   ['CPA 配置版本缺失，请重新加载后再保存', 'The CPA configuration revision is missing. Reload before saving.'],
   ['CPA 配置已被修改，请重新加载并核对后再保存', 'CPA configuration changed. Reload and review your changes before saving.'],

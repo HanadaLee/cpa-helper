@@ -1,6 +1,9 @@
 package migrations
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestPostgresImportBaselineTracksLatestSchema(t *testing.T) {
 	if PostgreSQLBaselineVersion != LatestVersion {
@@ -8,5 +11,8 @@ func TestPostgresImportBaselineTracksLatestSchema(t *testing.T) {
 	}
 	if len(PostgreSQLTables) == 0 {
 		t.Fatal("missing PostgreSQL import manifest")
+	}
+	if _, err := PostgresFS.ReadFile(fmt.Sprintf("postgres-import/%d_baseline.sql", PostgreSQLBaselineVersion)); err != nil {
+		t.Fatalf("missing current atomic-import schema: %v", err)
 	}
 }

@@ -2,8 +2,10 @@ import { apiClient } from '@/shared/api/apiClient'
 
 export const upstreamSectionNames = [
   'gemini-api-key',
+  'interactions-api-key',
   'codex-api-key',
   'xai-api-key',
+  'meta-api-key',
   'claude-api-key',
   'vertex-api-key',
   'openai-compatibility',

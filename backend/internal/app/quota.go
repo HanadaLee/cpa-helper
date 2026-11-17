@@ -81,17 +81,8 @@ func (a *App) updateUserQuota(ctx context.Context, userID int, payload userQuota
 	if err != nil {
 		return UserQuotaStatusResponse{}, err
 	}
-	// Both null means explicitly unlimited. A missing bucket in a limited plan is zero.
-	if daily != nil || weekly != nil {
-		if daily == nil {
-			value := 0.0
-			daily = &value
-		}
-		if weekly == nil {
-			value := 0.0
-			weekly = &value
-		}
-	}
+	// Each null independently disables that period's limit. An explicit zero
+	// remains an enabled, exhausted limit; both null means unlimited usage.
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return UserQuotaStatusResponse{}, err
@@ -201,9 +192,9 @@ func (a *App) applyQuotaCharge(ctx context.Context, record UsageRecord) error {
 		remaining float64
 		deducted  float64
 	}
-	dayEnd, _ := quotaPeriodEnds(now)
+	limitExpiry := quotaLimitExpiry(user, now)
 	buckets := []bucket{
-		{kind: "limit", expires: dayEnd, remaining: quotaLimitsRemaining(user)},
+		{kind: "limit", expires: limitExpiry, remaining: quotaLimitsRemaining(user)},
 	}
 	for _, card := range cards {
 		if card.Status != "active" || card.Kind != "credit" {
@@ -215,7 +206,8 @@ func (a *App) applyQuotaCharge(ctx context.Context, record UsageRecord) error {
 		}
 		buckets = append(buckets, bucket{kind: "card", id: card.ID, expires: expiry, remaining: card.RemainingUSD})
 	}
-	// Daily and weekly constrain one shared bucket. Its next expiry is midnight.
+	// Enabled periods constrain one shared bucket, expiring at the first enabled
+	// period's boundary. A weekly-only limit does not expire at daily midnight.
 	// Equal deadlines prefer the base limit, then card ID.
 	sort.SliceStable(buckets, func(i, j int) bool { return buckets[i].expires.Before(buckets[j].expires) })
 	amount, unpriced := recordCost(record, nil)
@@ -447,7 +439,22 @@ func quotaHasAvailable(user UserRecord) bool {
 }
 
 func quotaLimitsRemaining(user UserRecord) float64 {
-	return minQuotaAmount(quotaValue(quotaDailyRemaining(user)), quotaValue(quotaWeeklyRemaining(user)))
+	daily, weekly := quotaDailyRemaining(user), quotaWeeklyRemaining(user)
+	if daily == nil {
+		return quotaValue(weekly)
+	}
+	if weekly == nil {
+		return *daily
+	}
+	return minQuotaAmount(*daily, *weekly)
+}
+
+func quotaLimitExpiry(user UserRecord, now time.Time) time.Time {
+	dayEnd, weekEnd := quotaPeriodEnds(now)
+	if user.QuotaDailyUSD == nil {
+		return weekEnd
+	}
+	return dayEnd
 }
 
 func quotaDailyRemaining(user UserRecord) *float64 {

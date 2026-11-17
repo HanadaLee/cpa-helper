@@ -94,7 +94,8 @@ const isUserAdmin = ref(false)
 const userEnabled = ref(true)
 const originalUserEnabled = ref(true)
 const userNickname = ref('')
-const quotaUnlimited = ref(false)
+const quotaDailyEnabled = ref(true)
+const quotaWeeklyEnabled = ref(true)
 const quotaWeeklyUsd = ref(0)
 const quotaDailyUsd = ref(0)
 const page = ref(1)
@@ -232,7 +233,8 @@ function resetEditor() {
   userEnabled.value = true
   originalUserEnabled.value = true
   userNickname.value = ''
-  quotaUnlimited.value = false
+  quotaDailyEnabled.value = true
+  quotaWeeklyEnabled.value = true
   quotaWeeklyUsd.value = 0
   quotaDailyUsd.value = 0
 }
@@ -242,7 +244,8 @@ async function openCreateUser() {
   userPassword.value = 'password'
   try {
     const settings = await getSettings()
-    quotaUnlimited.value = settings.new_user_quota_unlimited
+    quotaDailyEnabled.value = !settings.new_user_quota_unlimited
+    quotaWeeklyEnabled.value = !settings.new_user_quota_unlimited
     quotaDailyUsd.value = settings.new_user_quota_daily_usd
     quotaWeeklyUsd.value = settings.new_user_quota_weekly_usd
   } catch (error) {
@@ -260,7 +263,8 @@ function editUser(row: UserSummary) {
   userEnabled.value = !isUserDisabled(row)
   originalUserEnabled.value = userEnabled.value
   userNickname.value = row.nickname
-  quotaUnlimited.value = row.quota.unlimited
+  quotaDailyEnabled.value = row.quota.daily_quota_usd !== null
+  quotaWeeklyEnabled.value = row.quota.weekly_quota_usd !== null
   quotaWeeklyUsd.value = row.quota.weekly_quota_usd ?? 0
   quotaDailyUsd.value = row.quota.daily_quota_usd ?? 0
   editorVisible.value = true
@@ -313,8 +317,8 @@ async function saveUser() {
         ? await updateUser(editingUserId.value, payload)
         : await createUser(payload)
     await updateUserQuota(saved.id, {
-      weekly_quota_usd: quotaUnlimited.value ? null : quotaWeeklyUsd.value,
-      daily_quota_usd: quotaUnlimited.value ? null : quotaDailyUsd.value,
+      weekly_quota_usd: quotaWeeklyEnabled.value ? quotaWeeklyUsd.value : null,
+      daily_quota_usd: quotaDailyEnabled.value ? quotaDailyUsd.value : null,
     })
     if (isEditing && !isEditingFirstUser.value && userEnabled.value !== originalUserEnabled.value) {
       if (userEnabled.value) await enableUser(saved.id)
@@ -469,8 +473,8 @@ onMounted(refresh)
               </TableCell>
               <TableCell>
                 <div class="flex min-w-0 flex-col gap-2">
-                  <QuotaProgress compact :label="t('日配额', 'Daily quota')" :remaining="row.quota.daily_remaining_usd" :total="row.quota.daily_quota_usd" :unlimited="row.quota.unlimited" />
-                  <QuotaProgress compact :label="t('周配额', 'Weekly quota')" :remaining="row.quota.weekly_remaining_usd" :total="row.quota.weekly_quota_usd" :unlimited="row.quota.unlimited" />
+                  <QuotaProgress compact :label="t('日配额', 'Daily quota')" :remaining="row.quota.daily_remaining_usd" :total="row.quota.daily_quota_usd" :unlimited="row.quota.daily_quota_usd === null" />
+                  <QuotaProgress compact :label="t('周配额', 'Weekly quota')" :remaining="row.quota.weekly_remaining_usd" :total="row.quota.weekly_quota_usd" :unlimited="row.quota.weekly_quota_usd === null" />
                   <QuotaProgress compact :label="t('额度卡', 'Cards')" :remaining="row.quota.cards_remaining_usd" :total="row.quota.cards_total_usd" />
                   <span
                     v-if="quotaDetail(row)"
@@ -620,44 +624,50 @@ onMounted(refresh)
             <FieldSet class="quota-fieldset">
               <FieldLegend>{{ t('配额设置', 'Quota settings') }}</FieldLegend>
               <FieldDescription>
-                {{ t('用量同时计入日配额和周配额，任一耗尽即暂停使用配额；额度卡按到期顺序抵扣，不占用配额。', 'Base usage counts toward both quotas and stops when either is exhausted. Cards are used by expiration and do not consume the quotas.') }}
+                {{ t('关闭开关表示不限制该周期；开启且设为 0 表示该周期没有基础配额，仍可使用额度卡。', 'Turn a period off to remove its limit. An enabled zero limit has no base quota; credit cards remain usable.') }}
               </FieldDescription>
               <FieldGroup>
-                <Field orientation="horizontal" class="switch-setting">
-                  <FieldContent>
-                    <FieldLabel for="quota-unlimited">{{ t('不限制余额', 'Unlimited balance') }}</FieldLabel>
-                    <FieldDescription>
-                      {{ t('开启后不扣余额，也不会因余额暂停 API Key。', 'Balances are not deducted and API keys are not paused due to balance.') }}
-                    </FieldDescription>
-                  </FieldContent>
-                  <Switch id="quota-unlimited" v-model="quotaUnlimited" />
-                </Field>
                 <FieldGroup class="quota-editor-grid">
-                  <Field>
-                    <FieldLabel for="quota-daily">{{ t('日配额 USD', 'Daily quota USD') }}</FieldLabel>
-                    <Input
-                      id="quota-daily"
-                      type="number"
-                      min="0"
-                      step="0.00000001"
-                      :model-value="quotaDailyUsd"
-                      :disabled="quotaUnlimited"
-                      @update:model-value="setQuotaDailyUsd"
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel for="quota-weekly">{{ t('周配额 USD', 'Weekly quota USD') }}</FieldLabel>
-                    <Input
-                      id="quota-weekly"
-                      type="number"
-                      min="0"
-                      step="0.00000001"
-                      :model-value="quotaWeeklyUsd"
-                      :disabled="quotaUnlimited"
-                      @update:model-value="setQuotaWeeklyUsd"
-                    />
-                  </Field>
+                  <FieldGroup>
+                    <Field orientation="horizontal" class="switch-setting">
+                      <FieldLabel for="quota-daily-enabled">{{ t('启用日配额', 'Enable daily quota') }}</FieldLabel>
+                      <Switch id="quota-daily-enabled" v-model="quotaDailyEnabled" />
+                    </Field>
+                    <Field :data-disabled="!quotaDailyEnabled || undefined">
+                      <FieldLabel for="quota-daily">{{ t('日配额 USD', 'Daily quota USD') }}</FieldLabel>
+                      <Input
+                        id="quota-daily"
+                        type="number"
+                        min="0"
+                        step="0.00000001"
+                        :model-value="quotaDailyUsd"
+                        :disabled="!quotaDailyEnabled"
+                        @update:model-value="setQuotaDailyUsd"
+                      />
+                    </Field>
+                  </FieldGroup>
+                  <FieldGroup>
+                    <Field orientation="horizontal" class="switch-setting">
+                      <FieldLabel for="quota-weekly-enabled">{{ t('启用周配额', 'Enable weekly quota') }}</FieldLabel>
+                      <Switch id="quota-weekly-enabled" v-model="quotaWeeklyEnabled" />
+                    </Field>
+                    <Field :data-disabled="!quotaWeeklyEnabled || undefined">
+                      <FieldLabel for="quota-weekly">{{ t('周配额 USD', 'Weekly quota USD') }}</FieldLabel>
+                      <Input
+                        id="quota-weekly"
+                        type="number"
+                        min="0"
+                        step="0.00000001"
+                        :model-value="quotaWeeklyUsd"
+                        :disabled="!quotaWeeklyEnabled"
+                        @update:model-value="setQuotaWeeklyUsd"
+                      />
+                    </Field>
+                  </FieldGroup>
                 </FieldGroup>
+                <Alert v-if="!quotaDailyEnabled && !quotaWeeklyEnabled">
+                  <AlertDescription>{{ t('日配额与周配额均已关闭，此用户不限制用量且不消耗额度卡。', 'Both quota limits are off. Usage is unlimited and does not consume credit cards.') }}</AlertDescription>
+                </Alert>
               </FieldGroup>
             </FieldSet>
           </FieldGroup>

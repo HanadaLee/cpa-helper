@@ -493,15 +493,11 @@ function quotaFootnote(quota: UserQuotaStatus | null): string {
   if (!quota) {
     return t('额度加载中', 'Quota loading')
   }
-  if (quota.unlimited) {
-    return t(
-      '日配额 无限制 / 周配额 无限制',
-      'Daily quota unlimited / Weekly quota unlimited',
-    )
-  }
+  const daily = quota.daily_quota_usd === null ? t('不限制', 'Unlimited') : formatUsd(quota.daily_remaining_usd ?? 0)
+  const weekly = quota.weekly_quota_usd === null ? t('不限制', 'Unlimited') : formatUsd(quota.weekly_remaining_usd ?? 0)
   const balancesText = t(
-    `日配额剩余 ${formatUsd(quota.daily_remaining_usd ?? 0)} / 周配额剩余 ${formatUsd(quota.weekly_remaining_usd ?? 0)} / 额度卡 ${formatUsd(quota.cards_remaining_usd ?? 0)}`,
-    `Daily quota remaining ${formatUsd(quota.daily_remaining_usd ?? 0)} / Weekly quota remaining ${formatUsd(quota.weekly_remaining_usd ?? 0)} / Cards ${formatUsd(quota.cards_remaining_usd ?? 0)}`,
+    `日配额 ${daily} / 周配额 ${weekly} / 额度卡 ${formatUsd(quota.cards_remaining_usd ?? 0)}`,
+    `Daily quota ${daily} / Weekly quota ${weekly} / Cards ${formatUsd(quota.cards_remaining_usd ?? 0)}`,
   )
   const notes: string[] = []
   if (quota.sync_error) {

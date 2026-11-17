@@ -829,21 +829,18 @@ function quotaStatusTitle(quota: UserQuotaStatus | null): string {
   if (!quota) {
     return t('额度加载中', 'Quota loading')
   }
-  const balancesText = quota.unlimited
-    ? t(
-        '日配额 无限制 / 周配额 无限制',
-        'Daily quota unlimited / Weekly quota unlimited',
-      )
-    : t(
-        `日配额剩余 ${formatUsd(quota.daily_remaining_usd ?? 0)} / 周配额剩余 ${formatUsd(quota.weekly_remaining_usd ?? 0)} / 额度卡 ${formatUsd(quota.cards_remaining_usd ?? 0)}`,
-        `Daily quota remaining ${formatUsd(quota.daily_remaining_usd ?? 0)} / Weekly quota remaining ${formatUsd(quota.weekly_remaining_usd ?? 0)} / Cards ${formatUsd(quota.cards_remaining_usd ?? 0)}`,
-      )
+  const daily = quota.daily_quota_usd === null ? t('不限制', 'Unlimited') : formatUsd(quota.daily_remaining_usd ?? 0)
+  const weekly = quota.weekly_quota_usd === null ? t('不限制', 'Unlimited') : formatUsd(quota.weekly_remaining_usd ?? 0)
+  const balancesText = t(
+    `日配额 ${daily} / 周配额 ${weekly} / 额度卡 ${formatUsd(quota.cards_remaining_usd ?? 0)}`,
+    `Daily quota ${daily} / Weekly quota ${weekly} / Cards ${formatUsd(quota.cards_remaining_usd ?? 0)}`,
+  )
   const notes: string[] = []
   if (quota.sync_error) {
     notes.push(t('Key 同步异常', 'Key sync error'))
   }
   if (quota.unpriced_records > 0) {
-    notes.push(t(`未定价 ${formatInteger(quota.unpriced_records)} 条`, `${formatInteger(quota.unpriced_records)} unpriced records`))
+    notes.push(t(`历史未定价 ${formatInteger(quota.unpriced_records)} 条`, `${formatInteger(quota.unpriced_records)} historical unpriced records`))
   }
   if (quota.paused) {
     notes.push(t('Key 已因余额暂停', 'Key paused due to balance'))
@@ -1162,11 +1159,13 @@ onBeforeUnmount(() => {
         <span
           v-if="isAccountScope"
           class="quota-status-pill"
+          data-testid="usage-balance"
           :class="{
             'is-paused': quotaStatus?.paused,
             'is-warning': (quotaStatus?.unpriced_records ?? 0) > 0 || !!quotaStatus?.sync_error,
           }"
           :title="quotaStatusTitle(quotaStatus)"
+          :aria-label="quotaStatusTitle(quotaStatus)"
         >
           <CircleDollarSign :size="14" :stroke-width="2.2" aria-hidden="true" />
           <strong>{{ quotaValueText(quotaStatus) }}</strong>

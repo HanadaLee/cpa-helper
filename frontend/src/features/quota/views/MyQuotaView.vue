@@ -122,10 +122,10 @@ onMounted(load)
       </CardHeader>
       <CardContent class="grid gap-6 md:grid-cols-2">
         <template v-if="quota">
-          <QuotaProgress :label="t('日配额', 'Daily quota')" :remaining="quota.daily_remaining_usd" :total="quota.daily_quota_usd" :unlimited="quota.unlimited">
+          <QuotaProgress :label="t('日配额', 'Daily quota')" :remaining="quota.daily_remaining_usd" :total="quota.daily_quota_usd" :unlimited="quota.daily_quota_usd === null">
             <span>{{ t('重置', 'Resets') }} {{ formatDateTime(quota.daily_resets_at) }}</span>
           </QuotaProgress>
-          <QuotaProgress :label="t('周配额', 'Weekly quota')" :remaining="quota.weekly_remaining_usd" :total="quota.weekly_quota_usd" :unlimited="quota.unlimited">
+          <QuotaProgress :label="t('周配额', 'Weekly quota')" :remaining="quota.weekly_remaining_usd" :total="quota.weekly_quota_usd" :unlimited="quota.weekly_quota_usd === null">
             <span>{{ t('重置', 'Resets') }} {{ formatDateTime(quota.weekly_resets_at) }}</span>
           </QuotaProgress>
         </template>

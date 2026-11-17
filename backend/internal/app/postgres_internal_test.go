@@ -109,6 +109,8 @@ func TestPostgresApplicationParity(t *testing.T) {
 		{"quota-reset", TestQuotaResetCardSingleUseOwnershipAndFixedPeriods},
 		{"quota-bulk", TestQuotaBulkIssueRevokeAndGlobalReset},
 		{"quota-periods", TestQuotaPeriodsAndMondayBoundary},
+		{"quota-period-switches", TestQuotaPeriodSwitchesAreIndependent},
+		{"quota-weekly-only", TestQuotaWeeklyOnlyBillsByExpiryAndSwitchingDoesNotResetUsage},
 		{"quota-unpriced", TestQuotaChargesImageAndUnpricedUsage},
 		{"quota-unlimited", TestQuotaUnlimitedUsageSkipsCharges},
 		{"retention-dedup-cost", TestStoredUsageCostRollupCleanupAndPermanentDedup},

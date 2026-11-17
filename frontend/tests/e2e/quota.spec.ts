@@ -27,6 +27,88 @@ async function member(page: Page, suffix: string) {
   return { id: user.id as number, username }
 }
 
+test('new users stay blocked by an enabled zero weekly quota and can be changed to weekly-only limits', async ({ page }) => {
+  await login(page)
+  await page.goto('/admin/users')
+  await page.getByRole('button', { name: '增加用户', exact: true }).click()
+  const creator = page.getByRole('dialog', { name: '增加用户', exact: true })
+  await expect(creator.getByRole('switch', { name: '启用周配额', exact: true })).toBeChecked()
+  await expect(creator.getByLabel('周配额 USD', { exact: true })).toHaveValue('0')
+  await creator.getByRole('button', { name: '取消', exact: true }).click()
+  const username = `weekly-switch-${Date.now()}`
+  const created = await page.request.post('/api/users', { data: { username, password: 'member-password', nickname: username } })
+  expect(created.ok()).toBeTruthy()
+  const user = await created.json()
+  expect(user.quota).toMatchObject({ unlimited: false, weekly_quota_usd: 0, available_usd: 0, can_create_keys: false })
+  await page.reload()
+  await page.getByRole('combobox', { name: '每页数量', exact: true }).click()
+  await page.getByRole('option', { name: '100', exact: true }).click()
+  await page.getByRole('button', { name: `编辑 ${username}`, exact: true }).click()
+  const editor = page.getByRole('dialog', { name: '编辑用户', exact: true })
+  await editor.getByRole('switch', { name: '启用日配额', exact: true }).uncheck()
+  await expect(editor.getByLabel('日配额 USD', { exact: true })).toBeDisabled()
+  await editor.getByLabel('周配额 USD', { exact: true }).fill('12')
+  await page.screenshot({ path: 'test-results/quota-weekly-only-editor.png', fullPage: true, animations: 'disabled' })
+  await editor.getByRole('button', { name: '保存', exact: true }).click()
+  await expect(editor).toBeHidden()
+  const updated = (await (await page.request.get('/api/users')).json()).find((item: { id: number }) => item.id === user.id)
+  expect(updated.quota).toMatchObject({ unlimited: false, daily_quota_usd: null, weekly_quota_usd: 12, available_usd: 12, can_create_keys: true })
+  expect((await page.request.post('/api/quota/cards/issue', { data: { user_ids: [user.id], kind: 'credit', amount_usd: 3, name: 'Weekly credit' } })).ok()).toBeTruthy()
+  await login(page, username, 'member-password')
+  await page.goto('/account/usage')
+  const badge = page.getByTestId('usage-balance')
+  await expect(badge).toHaveText('可用余额 $15.00')
+  await expect(badge).toHaveAttribute('title', /日配额 不限制 \/ 周配额 \$12.00 \/ 额度卡 \$3.00/)
+  await page.goto('/account/quota')
+  await expect(page.getByRole('progressbar', { name: '日配额', exact: true })).toHaveAttribute('aria-valuetext', '剩余 无限制')
+  await expect(page.getByRole('progressbar', { name: '周配额', exact: true })).toHaveAttribute('aria-valuetext', '剩余 $12.00 / $12.00')
+})
+
+test('quota period switches round trip independently and unlimited requires both off', async ({ page }) => {
+  await login(page)
+  const user = await member(page, 'daily-switch')
+  expect((await page.request.put(`/api/users/${user.id}/quota`, { data: { daily_quota_usd: 5, weekly_quota_usd: null } })).ok()).toBeTruthy()
+  await page.goto('/admin/users')
+  await page.getByRole('combobox', { name: '每页数量', exact: true }).click()
+  await page.getByRole('option', { name: '100', exact: true }).click()
+  await page.getByRole('button', { name: `编辑 ${user.username}`, exact: true }).click()
+  const editor = page.getByRole('dialog', { name: '编辑用户', exact: true })
+  await expect(editor.getByRole('switch', { name: '启用日配额', exact: true })).toBeChecked()
+  await expect(editor.getByRole('switch', { name: '启用周配额', exact: true })).not.toBeChecked()
+  await expect(editor.getByLabel('周配额 USD', { exact: true })).toBeDisabled()
+  await editor.getByRole('switch', { name: '启用日配额', exact: true }).uncheck()
+  await expect(editor.getByText('日配额与周配额均已关闭，此用户不限制用量且不消耗额度卡。', { exact: true })).toBeVisible()
+  await editor.getByRole('button', { name: '保存', exact: true }).click()
+  await expect(editor).toBeHidden()
+  const updated = (await (await page.request.get('/api/users')).json()).find((item: { id: number }) => item.id === user.id)
+  expect(updated.quota).toMatchObject({ unlimited: true, daily_quota_usd: null, weekly_quota_usd: null })
+})
+
+test('my usage shares its balance icon and status styling across administrator and member roles', async ({ page }) => {
+  await login(page)
+  const user = await member(page, 'balance-style')
+  const quota = (await (await page.request.get('/api/users')).json()).find((item: { id: number }) => item.id === user.id).quota
+  let warning = false
+  await page.route('**/api/account/quota', route => route.fulfill({ json: { ...quota, unpriced_records: warning ? 1 : 0 } }))
+  await page.goto('/account/usage')
+  const balance = page.getByTestId('usage-balance')
+  await expect(balance).toHaveText('可用余额 $2.00')
+  const adminIcon = await balance.locator('svg').innerHTML()
+  const adminColor = await balance.evaluate(element => getComputedStyle(element).color)
+  await expect(balance).not.toHaveClass(/is-warning/)
+  await login(page, user.username, 'member-password')
+  await page.goto('/account/usage')
+  await expect(balance).toHaveText('可用余额 $2.00')
+  expect(await balance.locator('svg').innerHTML()).toBe(adminIcon)
+  expect(await balance.evaluate(element => getComputedStyle(element).color)).toBe(adminColor)
+  warning = true
+  await page.reload()
+  await expect(balance).toHaveClass(/is-warning/)
+  await expect(balance).toHaveAttribute('title', /历史未定价 1 条/)
+  expect(await balance.locator('svg').innerHTML()).toBe(adminIcon)
+  expect(await balance.evaluate(element => getComputedStyle(element).color)).not.toBe(adminColor)
+})
+
 test('administrator issues, edits and revokes cards in bulk and resets quotas', async ({
   page,
 }) => {
@@ -83,6 +165,8 @@ test('card revocation confirmation stays above the user management dialog', asyn
   }
   const cards = (await (await page.request.get(`/api/quota/cards?user_id=${user.id}`)).json()).items as Array<{ id: number; kind: string; status: string }>
   await page.goto('/admin/users')
+  await page.getByRole('combobox', { name: '每页数量', exact: true }).click()
+  await page.getByRole('option', { name: '100', exact: true }).click()
   await page.getByRole('button', { name: `管理 ${user.username} 的额度卡`, exact: true }).click()
   const manager = page.getByRole('dialog', { name: '配额卡管理', exact: true })
   for (const kind of ['reset', 'credit']) {

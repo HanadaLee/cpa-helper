@@ -156,6 +156,13 @@ func TestSettingsConfigureNewUserQuota(t *testing.T) {
 	if settings.Unlimited || settings.DailyUSD != 0 || settings.WeeklyUSD != 0 {
 		t.Fatalf("default new-user quota settings = %+v, want two zero quotas", settings)
 	}
+	defaultMember := quotaAPIUserResponse{}
+	requestJSON(t, handler, http.MethodPost, "/api/users", map[string]any{
+		"username": "default-blocked-member", "password": "member-password", "nickname": "Default member",
+	}, cookies, &defaultMember)
+	if defaultMember.Quota.Unlimited || defaultMember.Quota.CanCreateKeys || defaultMember.Quota.WeeklyQuotaUSD == nil || *defaultMember.Quota.WeeklyQuotaUSD != 0 {
+		t.Fatalf("new registration must retain an enabled zero weekly quota: %#v", defaultMember.Quota)
+	}
 
 	requestJSONExpectStatus(t, handler, http.MethodPut, "/api/settings", map[string]any{
 		"new_user_quota_daily_usd": -0.01,

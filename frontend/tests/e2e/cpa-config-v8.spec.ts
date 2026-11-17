@@ -17,10 +17,10 @@ routing: {retry: {request-retry: 0}}
 plugins: {enabled: false, configs: {custom: {untouched: true}}}
 `
 
-async function mockConfig(page: Page, version = 8, fail = false, initialContent?: string) {
+async function mockConfig(page: Page, version = 8, fail = false, initialContent?: string, language = 'zh') {
   let content = initialContent ?? (version === 8 ? nativeYAML : 'host: ""\nport: 18316\napi-keys: [legacy-client]\n')
   const writes: { content: string, api_version: number, revision: string }[] = []
-  await page.addInitScript(() => localStorage.setItem('cpa-helper-language', 'zh'))
+  await page.addInitScript(language => localStorage.setItem('cpa-helper-language', language), language)
   await page.route(url => url.pathname.startsWith('/api/'), async route => {
     const path = new URL(route.request().url()).pathname
     if (path === '/api/auth/me') return route.fulfill({ json: { id: 1, username: 'admin', nickname: 'Admin', email: '', avatar: '', created_at: '2026-11-13T00:00:00+08:00', is_admin: true, cas_bound: false, can_change_password: true, must_change_password: false, can_view_account_status: true, can_view_usage_history: true } })
@@ -47,7 +47,7 @@ async function mockConfig(page: Page, version = 8, fail = false, initialContent?
     return route.fulfill({ json: {} })
   })
   await page.goto('/admin/settings')
-  await page.getByRole('tab', { name: 'CPA 配置', exact: true }).click()
+  await page.getByRole('tab', { name: language === 'zh' ? 'CPA 配置' : 'CPA Configuration', exact: true }).click()
   await expect(page.locator('#cpa-config-port')).toHaveValue('18316')
   return writes
 }
@@ -177,3 +177,66 @@ test('V8 upstream editing preserves untouched empty overrides and refreshes the 
   await expect.poll(() => writes.length).toBe(2)
   expect(writes[1].revision).toBe(`"${'b'.repeat(64)}"`)
 })
+
+for (const language of ['zh', 'en']) {
+  test(`all upstream provider tabs stay on one fully visible row at desktop and mobile widths (${language})`, async ({ page }) => {
+    await mockConfig(page, 8, false, undefined, language)
+    await page.route('**/api/upstreams', route => route.fulfill({ json: {
+      sections: {}, api_version: 8, revision: `"${'a'.repeat(64)}"`,
+    } }))
+    await page.goto('/admin/upstreams')
+    const tabs = page.getByRole('tablist', { name: language === 'zh' ? '提供商' : 'Providers', exact: true })
+    const providers = tabs.getByRole('tab')
+    await expect(providers).toHaveCount(8)
+
+    for (const width of [2574, 1920, 1440, 1024, 768, 390]) {
+      await page.setViewportSize({ width, height: 1000 })
+      const layout = await tabs.evaluate(list => {
+        const container = list.parentElement!
+        const listBox = list.getBoundingClientRect()
+        return {
+          listHeight: listBox.height,
+          containerHeight: container.clientHeight,
+          contentHeight: container.scrollHeight,
+          containerWidth: container.clientWidth,
+          contentWidth: container.scrollWidth,
+          pageWidth: document.documentElement.clientWidth,
+          pageContentWidth: document.documentElement.scrollWidth,
+          providers: [...list.querySelectorAll('[role="tab"]')].map(tab => {
+            const box = tab.getBoundingClientRect()
+            const label = tab.querySelector('.provider-tabs__label')!
+            return { top: box.top - listBox.top, bottom: box.bottom - listBox.top,
+              height: box.height, labelWidth: label.clientWidth, labelContentWidth: label.scrollWidth }
+          }),
+        }
+      })
+      expect(layout.contentHeight, `vertical clipping at ${width}px`).toBeLessThanOrEqual(layout.containerHeight + 1)
+      expect(layout.pageContentWidth, `page overflow at ${width}px`).toBeLessThanOrEqual(layout.pageWidth + 1)
+      for (const provider of layout.providers) {
+        expect(provider.top, `second provider row at ${width}px`).toBeCloseTo(layout.providers[0]!.top, 0)
+        expect(provider.height).toBeGreaterThanOrEqual(28)
+        expect(provider.bottom).toBeLessThanOrEqual(layout.listHeight + 1)
+        expect(provider.labelContentWidth).toBeLessThanOrEqual(provider.labelWidth + 1)
+      }
+      if (width >= 1920) expect(layout.contentWidth).toBeLessThanOrEqual(layout.containerWidth + 1)
+      if (width === 390) expect(layout.contentWidth).toBeGreaterThan(layout.containerWidth)
+      for (const provider of await providers.all()) {
+        await provider.click()
+        await expect(provider).toHaveAttribute('aria-selected', 'true')
+      }
+      await providers.first().focus()
+      await providers.first().press('End')
+      await expect(providers.last()).toBeFocused()
+      await expect(providers.last()).toHaveAttribute('aria-selected', 'true')
+      const lastVisible = await providers.last().evaluate(tab => {
+        const box = tab.getBoundingClientRect()
+        const viewport = tab.parentElement!.parentElement!.getBoundingClientRect()
+        return box.left >= viewport.left - 1 && box.right <= viewport.right + 1
+      })
+      expect(lastVisible, `last provider unreachable at ${width}px`).toBe(true)
+      if (width === 1920 || width === 390) {
+        await page.screenshot({ path: `test-results/upstream-provider-tabs-${language}-${width}.png`, fullPage: true, animations: 'disabled' })
+      }
+    }
+  })
+}

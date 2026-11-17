@@ -1491,19 +1491,21 @@ void loadUpstreams()
   min-width: 0;
   width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .provider-tabs__list {
-  display: grid;
-  width: 100%;
-  min-width: 750px;
+  display: flex;
+  flex-wrap: nowrap;
+  width: max-content;
+  min-width: 100%;
   height: 2.5rem;
-  grid-template-columns: repeat(6, minmax(7.5rem, 1fr));
   padding: .25rem;
 }
 
 .provider-tabs__item {
-  min-width: 0;
+  flex: 1 0 auto;
+  min-width: 7.5rem;
   gap: .375rem;
   padding-inline: .625rem;
 }

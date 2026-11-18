@@ -99,6 +99,11 @@ func TestPostgresReadSnapshotAndConcurrentSetup(t *testing.T) {
 	}
 }
 
+func TestPostgresUltraFastPrices(t *testing.T) {
+	t.Setenv("CPA_HELPER_DATABASE_URL", isolatedPostgres(t))
+	TestUltraFastPricePersistenceValidationAndSync(t)
+}
+
 func TestPostgresApplicationParity(t *testing.T) {
 	tests := []struct {
 		name string

@@ -2,7 +2,7 @@ package migrations
 
 // PostgreSQLBaselineVersion is also the schema understood by the atomic SQLite importer.
 // Regenerate the import baseline/manifest when advancing the current schema.
-const PostgreSQLBaselineVersion int64 = 202611130001
+const PostgreSQLBaselineVersion int64 = 202611180001
 
 // PostgreSQLTables is the baseline's dependency order. Keep it in sync with both
 // schemas; the importer refuses missing/extra tables or columns.

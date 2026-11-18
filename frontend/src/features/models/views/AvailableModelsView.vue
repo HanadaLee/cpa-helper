@@ -93,16 +93,18 @@ function rateTiers(row: AvailableModel): RateTier[] {
   const price = row.price
   if (!price) return [{ key: 'base', label: '-', prefix: '', multiplier: 1 }]
   const tiers: RateTier[] = []
-  const addTier = (key: string, label: string, prefix: RatePrefix, supportsFast = true) => {
+  const addTier = (key: string, label: string, prefix: RatePrefix, supportsFast = true, supportsUltraFast = true) => {
     tiers.push({ key, label, prefix, multiplier: 1 })
     if (price.fast_enabled && supportsFast) tiers.push({ key: `${key}-fast`, label: `${label} · FAST`, prefix, multiplier: price.fast_multiplier })
+    if (price.ultrafast_enabled && supportsUltraFast) tiers.push({ key: `${key}-ultrafast`, label: `${label} · ULTRAFAST`, prefix, multiplier: price.ultrafast_multiplier })
   }
   addTier('base', price.off_peak_enabled ? t('常规 · 空闲', 'Standard · off-peak') : t('常规', 'Standard'), '')
   if (price.off_peak_enabled) addTier('peak', t('常规 · 高峰', 'Standard · peak'), 'peak_')
   if (price.long_context_enabled) {
     const noFast = price.fast_enabled && price.long_context_fast_unsupported ? t(' · 无 FAST', ' · no FAST') : ''
-    addTier('long', (price.off_peak_enabled ? t('长上下文 · 空闲', 'Long context · off-peak') : t('长上下文', 'Long context')) + noFast, 'long_context_', !price.long_context_fast_unsupported)
-    if (price.off_peak_enabled) addTier('long-peak', t('长上下文 · 高峰', 'Long context · peak') + noFast, 'long_context_peak_', !price.long_context_fast_unsupported)
+    const suffix = noFast + (price.ultrafast_enabled && price.long_context_ultrafast_unsupported ? t(' · 无 ULTRAFAST', ' · no ULTRAFAST') : '')
+    addTier('long', (price.off_peak_enabled ? t('长上下文 · 空闲', 'Long context · off-peak') : t('长上下文', 'Long context')) + suffix, 'long_context_', !price.long_context_fast_unsupported, !price.long_context_ultrafast_unsupported)
+    if (price.off_peak_enabled) addTier('long-peak', t('长上下文 · 高峰', 'Long context · peak') + suffix, 'long_context_peak_', !price.long_context_fast_unsupported, !price.long_context_ultrafast_unsupported)
   }
   return tiers
 }

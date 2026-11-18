@@ -190,7 +190,9 @@ const form = reactive<ModelPricePayload>({
   cache_creation_usd_per_million: 0,
   request_usd: null,
   fast_enabled: false,
+  ultrafast_enabled: false,
   fast_multiplier: 1,
+  ultrafast_multiplier: 1,
   long_context_enabled: false,
   long_context_threshold_tokens: 0,
   long_context_input_usd_per_million: 0,
@@ -198,6 +200,7 @@ const form = reactive<ModelPricePayload>({
   long_context_cache_read_usd_per_million: 0,
   long_context_cache_creation_usd_per_million: 0,
   long_context_fast_unsupported: false,
+  long_context_ultrafast_unsupported: false,
   off_peak_enabled: false,
   peak_input_usd_per_million: 0,
   peak_output_usd_per_million: 0,
@@ -407,15 +410,18 @@ const isRequestPriceForm = computed(() => billingUnitForModel(form.model) === 'r
 const showLongContextFastUnsupported = computed(
   () => form.long_context_enabled && form.fast_enabled,
 )
+const showLongContextUltraFastUnsupported = computed(
+  () => form.long_context_enabled && form.ultrafast_enabled,
+)
 const priceSaveHint = computed(() =>
   isRequestPriceForm.value
     ? t(
-        'image 模型按每次成功调用固定金额计费；仅修改 FAST 或峰谷设置不会取消自动同步。',
-        'Image models are charged per successful call. Changing only FAST or peak/off-peak settings keeps price sync enabled.',
+        'image 模型按每次成功调用固定金额计费；仅修改 FAST、ULTRAFAST 或峰谷设置不会取消自动同步。',
+        'Image models are charged per successful call. Changing only FAST, ULTRAFAST or peak/off-peak settings keeps price sync enabled.',
       )
     : t(
-        '基础价格修改后会转为手动价格；仅修改 FAST、长上下文或峰谷设置不会取消自动同步。',
-        'Changing base prices makes them manual. Changing only FAST, long-context or peak/off-peak settings keeps price sync enabled.',
+        '基础价格修改后会转为手动价格；仅修改 FAST、ULTRAFAST、长上下文或峰谷设置不会取消自动同步。',
+        'Changing base prices makes them manual. Changing only FAST, ULTRAFAST, long-context or peak/off-peak settings keeps price sync enabled.',
       ),
 )
 
@@ -490,7 +496,9 @@ function resetForm() {
   form.cache_creation_usd_per_million = 0
   form.request_usd = null
   form.fast_enabled = false
+  form.ultrafast_enabled = false
   form.fast_multiplier = 1
+  form.ultrafast_multiplier = 1
   form.long_context_enabled = false
   form.long_context_threshold_tokens = 0
   form.long_context_input_usd_per_million = 0
@@ -498,6 +506,7 @@ function resetForm() {
   form.long_context_cache_read_usd_per_million = 0
   form.long_context_cache_creation_usd_per_million = 0
   form.long_context_fast_unsupported = false
+  form.long_context_ultrafast_unsupported = false
   form.off_peak_enabled = false
   form.peak_input_usd_per_million = 0
   form.peak_output_usd_per_million = 0
@@ -535,7 +544,9 @@ function openCreate(prefill: Partial<ModelPricePayload> = {}) {
   form.cache_creation_usd_per_million = prefill.cache_creation_usd_per_million ?? 0
   form.request_usd = prefill.request_usd ?? null
   form.fast_enabled = prefill.fast_enabled ?? false
+  form.ultrafast_enabled = prefill.ultrafast_enabled ?? false
   form.fast_multiplier = prefill.fast_multiplier ?? 1
+  form.ultrafast_multiplier = prefill.ultrafast_multiplier ?? 1
   form.long_context_enabled = prefill.long_context_enabled ?? false
   form.long_context_threshold_tokens = prefill.long_context_threshold_tokens ?? 0
   form.long_context_input_usd_per_million = prefill.long_context_input_usd_per_million ?? 0
@@ -543,6 +554,7 @@ function openCreate(prefill: Partial<ModelPricePayload> = {}) {
   form.long_context_cache_read_usd_per_million = prefill.long_context_cache_read_usd_per_million ?? 0
   form.long_context_cache_creation_usd_per_million = prefill.long_context_cache_creation_usd_per_million ?? 0
   form.long_context_fast_unsupported = prefill.long_context_fast_unsupported ?? false
+  form.long_context_ultrafast_unsupported = prefill.long_context_ultrafast_unsupported ?? false
   fillOffPeakForm(prefill)
   modalOpen.value = true
 }
@@ -564,7 +576,9 @@ function openEdit(row: ModelPrice) {
   form.cache_creation_usd_per_million = row.cache_creation_usd_per_million
   form.request_usd = row.request_usd
   form.fast_enabled = row.fast_enabled
+  form.ultrafast_enabled = row.ultrafast_enabled
   form.fast_multiplier = row.fast_multiplier
+  form.ultrafast_multiplier = row.ultrafast_multiplier
   form.long_context_enabled = row.long_context_enabled
   form.long_context_threshold_tokens = row.long_context_threshold_tokens
   form.long_context_input_usd_per_million = row.long_context_input_usd_per_million
@@ -572,6 +586,7 @@ function openEdit(row: ModelPrice) {
   form.long_context_cache_read_usd_per_million = row.long_context_cache_read_usd_per_million
   form.long_context_cache_creation_usd_per_million = row.long_context_cache_creation_usd_per_million
   form.long_context_fast_unsupported = row.long_context_fast_unsupported
+  form.long_context_ultrafast_unsupported = row.long_context_ultrafast_unsupported
   fillOffPeakForm(row)
   modalOpen.value = true
 }
@@ -595,7 +610,7 @@ function normalizeNumberInput(value: string | number, fallback = 0): number {
 }
 
 function setPriceNumber(
-  field: PriceFieldName | 'fast_multiplier',
+  field: PriceFieldName | 'fast_multiplier' | 'ultrafast_multiplier',
   value: string | number,
 ) {
   form[field] = normalizeNumberInput(value)
@@ -659,7 +674,9 @@ async function savePrice() {
     cache_creation_usd_per_million: form.cache_creation_usd_per_million,
     request_usd: requestUSD,
     fast_enabled: form.fast_enabled,
+    ultrafast_enabled: form.ultrafast_enabled,
     fast_multiplier: form.fast_enabled ? form.fast_multiplier : 1,
+    ultrafast_multiplier: form.ultrafast_enabled ? form.ultrafast_multiplier : 1,
     long_context_enabled: !requestPriceMode && form.long_context_enabled,
     long_context_threshold_tokens: requestPriceMode ? 0 : form.long_context_threshold_tokens,
     long_context_input_usd_per_million: requestPriceMode ? 0 : form.long_context_input_usd_per_million,
@@ -667,6 +684,7 @@ async function savePrice() {
     long_context_cache_read_usd_per_million: requestPriceMode ? 0 : form.long_context_cache_read_usd_per_million,
     long_context_cache_creation_usd_per_million: requestPriceMode ? 0 : form.long_context_cache_creation_usd_per_million,
     long_context_fast_unsupported: !requestPriceMode && form.fast_enabled && form.long_context_fast_unsupported,
+    long_context_ultrafast_unsupported: !requestPriceMode && form.ultrafast_enabled && form.long_context_ultrafast_unsupported,
     off_peak_enabled: form.off_peak_enabled,
     peak_input_usd_per_million: form.peak_input_usd_per_million,
     peak_output_usd_per_million: form.peak_output_usd_per_million,
@@ -684,6 +702,10 @@ async function savePrice() {
   }
   if (!Number.isFinite(payload.fast_multiplier) || payload.fast_multiplier <= 0) {
     message.error(t('FAST 倍率必须大于 0', 'FAST multiplier must be greater than 0'))
+    return
+  }
+  if (!Number.isFinite(payload.ultrafast_multiplier) || payload.ultrafast_multiplier <= 0) {
+    message.error(t('ULTRAFAST 倍率必须大于 0', 'ULTRAFAST multiplier must be greater than 0'))
     return
   }
   if (requestPriceMode && requestUSD === null) {
@@ -794,18 +816,22 @@ function priceTiers(row: PriceDisplayRow): PriceTier[] {
   const price = row.price
   if (!price) return [{ key: 'base', label: '-', prefix: '', multiplier: 1 }]
   const tiers: PriceTier[] = []
-  const addTier = (key: string, label: string, prefix: PriceTier['prefix'], supportsFast = true) => {
+  const addTier = (key: string, label: string, prefix: PriceTier['prefix'], supportsFast = true, supportsUltraFast = true) => {
     tiers.push({ key, label, prefix, multiplier: 1 })
     if (supportsFast && price.fast_enabled) {
       tiers.push({ key: `${key}-fast`, label: `${label} · FAST`, prefix, multiplier: price.fast_multiplier })
+    }
+    if (supportsUltraFast && price.ultrafast_enabled) {
+      tiers.push({ key: `${key}-ultrafast`, label: `${label} · ULTRAFAST`, prefix, multiplier: price.ultrafast_multiplier })
     }
   }
   addTier('base', price.off_peak_enabled ? t('常规 · 空闲', 'Standard · off-peak') : t('常规', 'Standard'), '')
   if (price.off_peak_enabled) addTier('peak', t('常规 · 高峰', 'Standard · peak'), 'peak_')
   if (price.long_context_enabled) {
     const fastSuffix = price.fast_enabled && price.long_context_fast_unsupported ? t(' · 无 FAST', ' · no FAST') : ''
-    addTier('long', (price.off_peak_enabled ? t('长上下文 · 空闲', 'Long context · off-peak') : t('长上下文', 'Long context')) + fastSuffix, 'long_context_', !price.long_context_fast_unsupported)
-    if (price.off_peak_enabled) addTier('long-peak', t('长上下文 · 高峰', 'Long context · peak') + fastSuffix, 'long_context_peak_', !price.long_context_fast_unsupported)
+    const suffix = fastSuffix + (price.ultrafast_enabled && price.long_context_ultrafast_unsupported ? t(' · 无 ULTRAFAST', ' · no ULTRAFAST') : '')
+    addTier('long', (price.off_peak_enabled ? t('长上下文 · 空闲', 'Long context · off-peak') : t('长上下文', 'Long context')) + suffix, 'long_context_', !price.long_context_fast_unsupported, !price.long_context_ultrafast_unsupported)
+    if (price.off_peak_enabled) addTier('long-peak', t('长上下文 · 高峰', 'Long context · peak') + suffix, 'long_context_peak_', !price.long_context_fast_unsupported, !price.long_context_ultrafast_unsupported)
   }
   return tiers
 }
@@ -1154,6 +1180,24 @@ onMounted(() => {
                 @update:model-value="setPriceNumber('fast_multiplier', $event)"
               />
             </Field>
+            <Field orientation="horizontal" class="wide-form-item long-context-switch-row">
+              <FieldContent>
+                <FieldLabel for="price-ultrafast-enabled">{{ t('支持 ULTRAFAST 模式', 'Supports ULTRAFAST mode') }}</FieldLabel>
+                <FieldDescription>{{ t('仅支持 ULTRAFAST 的模型才会按倍率计费并展示 ULTRAFAST 档位。', 'Only supported models use the multiplier and show ULTRAFAST rate tiers.') }}</FieldDescription>
+              </FieldContent>
+              <Switch id="price-ultrafast-enabled" v-model="form.ultrafast_enabled" />
+            </Field>
+            <Field v-if="form.ultrafast_enabled" class="wide-form-item">
+              <FieldLabel for="price-ultrafast-multiplier">{{ t('ULTRAFAST 倍率', 'ULTRAFAST multiplier') }}</FieldLabel>
+              <Input
+                id="price-ultrafast-multiplier"
+                type="number"
+                min="0.01"
+                step="0.01"
+                :model-value="form.ultrafast_multiplier"
+                @update:model-value="setPriceNumber('ultrafast_multiplier', $event)"
+              />
+            </Field>
             <Field v-if="isRequestPriceForm" class="wide-form-item">
               <FieldLabel for="price-per-request">{{ t('每次调用价格 USD', 'Per-call price USD') }}</FieldLabel>
               <Input
@@ -1325,6 +1369,30 @@ onMounted(() => {
                       id="price-long-context-fast-unsupported"
                       :model-value="!form.long_context_fast_unsupported"
                       @update:model-value="form.long_context_fast_unsupported = !$event"
+                    />
+                  </Field>
+                  <Field
+                    v-if="showLongContextUltraFastUnsupported"
+                    orientation="horizontal"
+                    class="wide-form-item long-context-ultrafast-row"
+                  >
+                    <FieldContent>
+                      <FieldLabel for="price-long-context-ultrafast-unsupported">
+                        {{ t('长上下文支持 ULTRAFAST 模式', 'ULTRAFAST mode available for long context') }}
+                      </FieldLabel>
+                      <FieldDescription>
+                        {{
+                          t(
+                            '开启后，长上下文请求也可叠加 ULTRAFAST 倍率；关闭时仅短上下文支持 ULTRAFAST。',
+                            'When enabled, long-context requests also use the ULTRAFAST multiplier; otherwise only short-context requests do.',
+                          )
+                        }}
+                      </FieldDescription>
+                    </FieldContent>
+                    <Switch
+                      id="price-long-context-ultrafast-unsupported"
+                      :model-value="!form.long_context_ultrafast_unsupported"
+                      @update:model-value="form.long_context_ultrafast_unsupported = !$event"
                     />
                   </Field>
                 </FieldGroup>

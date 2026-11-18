@@ -653,7 +653,9 @@ export interface ModelPrice {
   cache_creation_usd_per_million: number
   request_usd: number | null
   fast_enabled: boolean
+  ultrafast_enabled: boolean
   fast_multiplier: number
+  ultrafast_multiplier: number
   long_context_enabled: boolean
   long_context_threshold_tokens: number
   long_context_input_usd_per_million: number
@@ -661,6 +663,7 @@ export interface ModelPrice {
   long_context_cache_read_usd_per_million: number
   long_context_cache_creation_usd_per_million: number
   long_context_fast_unsupported: boolean
+  long_context_ultrafast_unsupported: boolean
   off_peak_enabled: boolean
   peak_input_usd_per_million: number
   peak_output_usd_per_million: number
@@ -688,7 +691,9 @@ export interface ModelPricePayload {
   cache_creation_usd_per_million: number
   request_usd: number | null
   fast_enabled: boolean
+  ultrafast_enabled: boolean
   fast_multiplier: number
+  ultrafast_multiplier: number
   long_context_enabled: boolean
   long_context_threshold_tokens: number
   long_context_input_usd_per_million: number
@@ -696,6 +701,7 @@ export interface ModelPricePayload {
   long_context_cache_read_usd_per_million: number
   long_context_cache_creation_usd_per_million: number
   long_context_fast_unsupported: boolean
+  long_context_ultrafast_unsupported: boolean
   off_peak_enabled: boolean
   peak_input_usd_per_million: number
   peak_output_usd_per_million: number
@@ -836,7 +842,9 @@ export interface AvailableModelPrice {
   cache_creation_usd_per_million: number
   request_usd: number | null
   fast_enabled: boolean
+  ultrafast_enabled: boolean
   fast_multiplier: number
+  ultrafast_multiplier: number
   long_context_enabled: boolean
   long_context_threshold_tokens: number
   long_context_input_usd_per_million: number
@@ -844,6 +852,7 @@ export interface AvailableModelPrice {
   long_context_cache_read_usd_per_million: number
   long_context_cache_creation_usd_per_million: number
   long_context_fast_unsupported: boolean
+  long_context_ultrafast_unsupported: boolean
   off_peak_enabled: boolean
   peak_input_usd_per_million: number
   peak_output_usd_per_million: number

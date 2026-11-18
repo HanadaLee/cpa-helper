@@ -1,4 +1,4 @@
--- PostgreSQL baseline equivalent to SQLite schema 202611130001.
+-- PostgreSQL baseline equivalent to SQLite schema 202611180001.
 -- Preserve text timestamps and integer flags for lossless cross-engine migration.
 -- Monetary/rate values use NUMERIC; counters/identities use BIGINT.
 -- Atomic import only; fresh installations use the independent goose migration chain.
@@ -544,4 +544,8 @@ CREATE UNIQUE INDEX ux_tutorials_title ON tutorials(title);
 
 
 ALTER TABLE usage_records ADD COLUMN cpa_metadata_json TEXT NOT NULL DEFAULT '{}';
+
+ALTER TABLE model_prices ADD COLUMN ultrafast_enabled SMALLINT NOT NULL DEFAULT 0 CHECK (ultrafast_enabled IN (0, 1));
+ALTER TABLE model_prices ADD COLUMN ultrafast_multiplier NUMERIC NOT NULL DEFAULT 1 CHECK (ultrafast_multiplier > 0);
+ALTER TABLE model_prices ADD COLUMN long_context_ultrafast_unsupported SMALLINT NOT NULL DEFAULT 0 CHECK (long_context_ultrafast_unsupported IN (0, 1));
 

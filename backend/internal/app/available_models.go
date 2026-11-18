@@ -40,7 +40,9 @@ type AvailableModelPrice struct {
 	CacheCreationUSDPerMillion                float64  `json:"cache_creation_usd_per_million"`
 	RequestUSD                                *float64 `json:"request_usd"`
 	FastEnabled                               bool     `json:"fast_enabled"`
+	UltraFastEnabled                          bool     `json:"ultrafast_enabled"`
 	FastMultiplier                            float64  `json:"fast_multiplier"`
+	UltraFastMultiplier                       float64  `json:"ultrafast_multiplier"`
 	LongContextEnabled                        bool     `json:"long_context_enabled"`
 	LongContextThresholdTokens                int      `json:"long_context_threshold_tokens"`
 	LongContextInputUSDPerMillion             float64  `json:"long_context_input_usd_per_million"`
@@ -48,6 +50,7 @@ type AvailableModelPrice struct {
 	LongContextCacheReadUSDPerMillion         float64  `json:"long_context_cache_read_usd_per_million"`
 	LongContextCacheCreationUSDPerMillion     float64  `json:"long_context_cache_creation_usd_per_million"`
 	LongContextFastUnsupported                bool     `json:"long_context_fast_unsupported"`
+	LongContextUltraFastUnsupported           bool     `json:"long_context_ultrafast_unsupported"`
 	OffPeakEnabled                            bool     `json:"off_peak_enabled"`
 	PeakInputUSDPerMillion                    float64  `json:"peak_input_usd_per_million"`
 	PeakOutputUSDPerMillion                   float64  `json:"peak_output_usd_per_million"`
@@ -193,6 +196,9 @@ func (a *App) availableModelsForUser(ctx context.Context, userID int) (Available
 				RequestUSD:                                price.RequestUSD,
 				FastMultiplier:                            price.FastMultiplier,
 				FastEnabled:                               price.FastEnabled,
+				UltraFastEnabled:                          price.UltraFastEnabled,
+				UltraFastMultiplier:                       price.UltraFastMultiplier,
+				LongContextUltraFastUnsupported:           price.LongContextUltraFastUnsupported,
 				LongContextEnabled:                        price.LongContextEnabled,
 				LongContextThresholdTokens:                price.LongContextThresholdTokens,
 				LongContextInputUSDPerMillion:             price.LongContextInputUSDPerMillion,

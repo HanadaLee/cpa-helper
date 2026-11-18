@@ -721,7 +721,10 @@ function formatModelWithReasoning(
   if (reasoningEffort) {
     parts.push(reasoningEffort)
   }
-  if (includeFast && isFastServiceTier(record.effective_service_tier ?? record.request_service_tier)) {
+  const tier = (record.effective_service_tier ?? record.request_service_tier)?.trim().toLowerCase()
+  if (includeFast && tier === 'ultrafast') {
+    parts.push('ultrafast')
+  } else if (includeFast && isFastServiceTier(tier)) {
     parts.push('fast')
   }
   return parts.join(' ')
